@@ -141,7 +141,7 @@ namespace V4L2Tools
 #ifdef DEBUG
                 std::cout << "\033[33m[V4L2Info] V4L2 data deleted" << "\n";
 #endif
-                delete data;
+                delete[] data;
                 data = nullptr;
             }
         };

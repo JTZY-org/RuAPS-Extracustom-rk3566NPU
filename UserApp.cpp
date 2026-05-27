@@ -13,13 +13,21 @@
 
 #include "yolo_npu.h"
 
-#define USERAPP_ENABLE_PRINT 0
-#ifndef USERAPP_ENABLE_PRINT
-#define USERAPP_ENABLE_PRINT 1
+#define USERAPP_ENABLE_PRINT_INIT 1
+#ifndef USERAPP_ENABLE_PRINT_INIT
+#define USERAPP_ENABLE_PRINT_INIT 1
 #endif
 
-#define APP_COUT if (USERAPP_ENABLE_PRINT) std::cout
-#define APP_CERR if (USERAPP_ENABLE_PRINT) std::cerr
+#define USERAPP_ENABLE_PRINT_INIT 0
+#ifndef USERAPP_ENABLE_PRINT_EXCHANGE
+#define USERAPP_ENABLE_PRINT_EXCHANGE 1
+#endif
+
+#define APP_INIT_COUT if (USERAPP_ENABLE_PRINT_INIT) std::cout
+#define APP_INIT_CERR if (USERAPP_ENABLE_PRINT_INIT) std::cerr
+
+#define APP_EXCH_COUT if (USERAPP_ENABLE_PRINT_EXCHANGE) std::cout
+#define APP_EXCH_CERR if (USERAPP_ENABLE_PRINT_EXCHANGE) std::cerr
 
 #ifndef USERAPP_DEFAULT_YOLO_MODEL
 #define USERAPP_DEFAULT_YOLO_MODEL "/etc/rknn/yolov8n.rknn"
@@ -88,7 +96,7 @@ void destroyYolo()
 
 extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 {
-    APP_COUT << "[UserApp] init RKNN YOLO APP" << std::endl;
+    APP_INIT_COUT << "[UserApp] init RKNN YOLO APP" << std::endl;
 
     g_frameWidth = vinfo.ImgWidth;
     g_frameHeight = vinfo.ImgHeight;
@@ -97,12 +105,12 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     const size_t frameSize = static_cast<size_t>(g_frameWidth) * static_cast<size_t>(g_frameHeight) * 3 / 2;
     g_frameBuffer.assign(frameSize, 0);
 
-    APP_COUT << "[UserApp] RKNN input buffer: "
+    APP_INIT_COUT << "[UserApp] RKNN input buffer: "
               << frameSize << " bytes, " << g_frameWidth << "x" << g_frameHeight << std::endl;
 
     if (g_framePixFormat != V4L2_PIX_FMT_NV12)
     {
-        APP_COUT << "[UserApp] Warning: camera pixfmt is not V4L2_PIX_FMT_NV12; YOLO expects NV12 input" << std::endl;
+        APP_INIT_COUT << "[UserApp] Warning: camera pixfmt is not V4L2_PIX_FMT_NV12; YOLO expects NV12 input" << std::endl;
     }
 
     const std::string modelPath = getEnvOrDefault("YOLO_NPU_MODEL", USERAPP_DEFAULT_YOLO_MODEL);
@@ -111,7 +119,7 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_labels = loadLabels(labelsPath);
     if (g_labels.empty())
     {
-        APP_COUT << "[UserApp] Warning: labels not loaded from " << labelsPath << std::endl;
+        APP_INIT_COUT << "[UserApp] Warning: labels not loaded from " << labelsPath << std::endl;
     }
 
     destroyYolo();
@@ -122,11 +130,11 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 
     if (g_yoloHandle == nullptr)
     {
-        APP_CERR << "[UserApp] Failed to init YOLO_NPU, model=" << modelPath << std::endl;
+        APP_INIT_CERR << "[UserApp] Failed to init YOLO_NPU, model=" << modelPath << std::endl;
     }
     else
     {
-        APP_COUT << "[UserApp] YOLO_NPU ready, api=" << yolo_npu_api_version()
+        APP_INIT_COUT << "[UserApp] YOLO_NPU ready, api=" << yolo_npu_api_version()
                   << ", model=" << modelPath << std::endl;
     }
 }
@@ -149,7 +157,7 @@ extern "C" void UserAppExChange(UserAppData data)
 
     if (frame.size < g_frameBuffer.size())
     {
-        APP_CERR << "[UserApp] Frame is smaller than expected NV12 size: "
+        APP_EXCH_CERR << "[UserApp] Frame is smaller than expected NV12 size: "
                   << frame.size << " < " << g_frameBuffer.size() << std::endl;
         return;
     }
@@ -166,15 +174,15 @@ extern "C" void UserAppExChange(UserAppData data)
     std::memset(&info, 0, sizeof(info));
     if (yolo_npu_detect(g_yoloHandle, g_frameBuffer.data(), g_frameWidth, g_frameHeight, &info) != 0)
     {
-        APP_CERR << "[UserApp] YOLO detect failed at frame " << currentFrameId << std::endl;
+        APP_EXCH_CERR << "[UserApp] YOLO detect failed at frame " << currentFrameId << std::endl;
         return;
     }
 
-    APP_COUT << "[UserApp] frame=" << currentFrameId << " detections=" << info.count << std::endl;
+    APP_EXCH_COUT << "[UserApp] frame=" << currentFrameId << " detections=" << info.count << std::endl;
     for (int i = 0; i < info.count; ++i)
     {
         const yolo_det_t &det = info.detections[i];
-        APP_COUT << "[UserApp] det[" << i << "]"
+        APP_EXCH_COUT << "[UserApp] det[" << i << "]"
                   << " cls_id=" << det.cls_id
                   << " type=" << labelName(det.cls_id)
                   << " prob=" << det.prob

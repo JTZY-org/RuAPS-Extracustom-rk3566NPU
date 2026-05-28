@@ -18,16 +18,24 @@
 #define USERAPP_ENABLE_PRINT_INIT 1
 #endif
 
-#define USERAPP_ENABLE_PRINT_INIT 0
+#define USERAPP_ENABLE_PRINT_EXCHANGE 0
 #ifndef USERAPP_ENABLE_PRINT_EXCHANGE
 #define USERAPP_ENABLE_PRINT_EXCHANGE 1
 #endif
 
-#define APP_INIT_COUT if (USERAPP_ENABLE_PRINT_INIT) std::cout
-#define APP_INIT_CERR if (USERAPP_ENABLE_PRINT_INIT) std::cerr
+#define APP_INIT_COUT              \
+    if (USERAPP_ENABLE_PRINT_INIT) \
+    std::cout
+#define APP_INIT_CERR              \
+    if (USERAPP_ENABLE_PRINT_INIT) \
+    std::cerr
 
-#define APP_EXCH_COUT if (USERAPP_ENABLE_PRINT_EXCHANGE) std::cout
-#define APP_EXCH_CERR if (USERAPP_ENABLE_PRINT_EXCHANGE) std::cerr
+#define APP_EXCH_COUT                  \
+    if (USERAPP_ENABLE_PRINT_EXCHANGE) \
+    std::cout
+#define APP_EXCH_CERR                  \
+    if (USERAPP_ENABLE_PRINT_EXCHNGE) \
+    std::cerrA
 
 #ifndef USERAPP_DEFAULT_YOLO_MODEL
 #define USERAPP_DEFAULT_YOLO_MODEL "/etc/rknn/yolov8n.rknn"
@@ -39,59 +47,59 @@
 
 namespace
 {
-std::vector<uint8_t> g_frameBuffer;
-int g_frameWidth = 0;
-int g_frameHeight = 0;
-unsigned int g_framePixFormat = 0;
+    std::vector<uint8_t> g_frameBuffer;
+    int g_frameWidth = 0;
+    int g_frameHeight = 0;
+    unsigned int g_framePixFormat = 0;
 
-void *g_yoloHandle = nullptr;
-std::vector<std::string> g_labels;
-std::mutex g_yoloMutex;
+    void *g_yoloHandle = nullptr;
+    std::vector<std::string> g_labels;
+    std::mutex g_yoloMutex;
 
-std::string getEnvOrDefault(const char *name, const char *fallback)
-{
-    const char *value = std::getenv(name);
-    if (value != nullptr && value[0] != '\0')
+    std::string getEnvOrDefault(const char *name, const char *fallback)
     {
-        return value;
-    }
-    return fallback;
-}
-
-std::vector<std::string> loadLabels(const std::string &labelsPath)
-{
-    std::vector<std::string> labels;
-    std::ifstream infile(labelsPath);
-    std::string line;
-    while (std::getline(infile, line))
-    {
-        if (!line.empty() && line.back() == '\r')
+        const char *value = std::getenv(name);
+        if (value != nullptr && value[0] != '\0')
         {
-            line.pop_back();
+            return value;
         }
-        labels.push_back(line);
+        return fallback;
     }
-    return labels;
-}
 
-const char *labelName(int clsId)
-{
-    if (clsId >= 0 && static_cast<size_t>(clsId) < g_labels.size() && !g_labels[clsId].empty())
+    std::vector<std::string> loadLabels(const std::string &labelsPath)
     {
-        return g_labels[clsId].c_str();
+        std::vector<std::string> labels;
+        std::ifstream infile(labelsPath);
+        std::string line;
+        while (std::getline(infile, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+            labels.push_back(line);
+        }
+        return labels;
     }
-    return "unknown";
-}
 
-void destroyYolo()
-{
-    std::lock_guard<std::mutex> lock(g_yoloMutex);
-    if (g_yoloHandle != nullptr)
+    const char *labelName(int clsId)
     {
-        yolo_npu_destroy(g_yoloHandle);
-        g_yoloHandle = nullptr;
+        if (clsId >= 0 && static_cast<size_t>(clsId) < g_labels.size() && !g_labels[clsId].empty())
+        {
+            return g_labels[clsId].c_str();
+        }
+        return "unknown";
     }
-}
+
+    void destroyYolo()
+    {
+        std::lock_guard<std::mutex> lock(g_yoloMutex);
+        if (g_yoloHandle != nullptr)
+        {
+            yolo_npu_destroy(g_yoloHandle);
+            g_yoloHandle = nullptr;
+        }
+    }
 } // namespace
 
 extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
@@ -106,7 +114,7 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_frameBuffer.assign(frameSize, 0);
 
     APP_INIT_COUT << "[UserApp] RKNN input buffer: "
-              << frameSize << " bytes, " << g_frameWidth << "x" << g_frameHeight << std::endl;
+                  << frameSize << " bytes, " << g_frameWidth << "x" << g_frameHeight << std::endl;
 
     if (g_framePixFormat != V4L2_PIX_FMT_NV12)
     {
@@ -135,7 +143,7 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     else
     {
         APP_INIT_COUT << "[UserApp] YOLO_NPU ready, api=" << yolo_npu_api_version()
-                  << ", model=" << modelPath << std::endl;
+                      << ", model=" << modelPath << std::endl;
     }
 }
 
@@ -158,7 +166,7 @@ extern "C" void UserAppExChange(UserAppData data)
     if (frame.size < g_frameBuffer.size())
     {
         APP_EXCH_CERR << "[UserApp] Frame is smaller than expected NV12 size: "
-                  << frame.size << " < " << g_frameBuffer.size() << std::endl;
+                      << frame.size << " < " << g_frameBuffer.size() << std::endl;
         return;
     }
 
@@ -179,15 +187,57 @@ extern "C" void UserAppExChange(UserAppData data)
     }
 
     APP_EXCH_COUT << "[UserApp] frame=" << currentFrameId << " detections=" << info.count << std::endl;
+
+    auto appendUint16 = [](std::vector<uint8_t> &vec, uint16_t val)
+    {
+        vec.push_back(static_cast<uint8_t>((val >> 0) & 0xFF));
+        vec.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
+    };
+
     for (int i = 0; i < info.count; ++i)
     {
         const yolo_det_t &det = info.detections[i];
         APP_EXCH_COUT << "[UserApp] det[" << i << "]"
-                  << " cls_id=" << det.cls_id
-                  << " type=" << labelName(det.cls_id)
-                  << " prob=" << det.prob
-                  << " box=(" << det.x1 << "," << det.y1 << ")-(" << det.x2 << "," << det.y2 << ")"
-                  << std::endl;
+                      << " cls_id=" << det.cls_id
+                      << " type=" << labelName(det.cls_id)
+                      << " prob=" << det.prob
+                      << " box=(" << det.x1 << "," << det.y1 << ")-(" << det.x2 << "," << det.y2 << ")"
+                      << std::endl;
+
+        std::vector<uint8_t> broadcastData;
+        broadcastData.reserve(15);     // 1 byte header + 14 bytes detection payload (7 fields * 2 bytes)
+        broadcastData.push_back(0xFE); // Header
+
+        // Serialize id, type, confidence, and box (x1, y1, x2, y2) as uint16_t
+        uint16_t targetId = static_cast<uint16_t>(i + 1);
+        uint16_t targetType = static_cast<uint16_t>(det.cls_id);
+        uint16_t targetConfidence = static_cast<uint16_t>(det.prob * 100.0f); // 0-100%
+
+        appendUint16(broadcastData, targetId);
+        appendUint16(broadcastData, targetType);
+        appendUint16(broadcastData, targetConfidence);
+        appendUint16(broadcastData, static_cast<uint16_t>(det.x1));
+        appendUint16(broadcastData, static_cast<uint16_t>(det.y1));
+        appendUint16(broadcastData, static_cast<uint16_t>(det.x2));
+        appendUint16(broadcastData, static_cast<uint16_t>(det.y2));
+
+        if (data.pushBoradcastData)
+        {
+            data.pushBoradcastData(broadcastData);
+
+#if(USERAPP_ENABLE_PRINT_EXCHANGE)
+            {
+                std::string hexStr;
+                char hexBuf[16];
+                for (uint8_t b : broadcastData)
+                {
+                    snprintf(hexBuf, sizeof(hexBuf), "%02X", b);
+                    hexStr += hexBuf;
+                }
+                std::cout << "[UserApp] Sent broadcast data (Hex): " << hexStr << std::endl;
+            }
+#endif
+        }
     }
 }
 

@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <chrono>
 
 #include "yolo_npu.h"
 
@@ -155,14 +156,6 @@ extern "C" void UserAppExChange(UserAppData data)
         return;
     }
 
-    static std::atomic<uint64_t> frameCounter{0};
-    const uint64_t currentFrameId = ++frameCounter;
-
-    if (currentFrameId % 10 != 0)
-    {
-        return;
-    }
-
     if (frame.size < g_frameBuffer.size())
     {
         APP_EXCH_CERR << "[UserApp] Frame is smaller than expected NV12 size: "
@@ -170,23 +163,41 @@ extern "C" void UserAppExChange(UserAppData data)
         return;
     }
 
-    std::copy(frame.data, frame.data + g_frameBuffer.size(), g_frameBuffer.data());
-
-    std::lock_guard<std::mutex> lock(g_yoloMutex);
-    if (g_yoloHandle == nullptr)
+    std::unique_lock<std::mutex> lock(g_yoloMutex, std::try_to_lock);
+    if (!lock.owns_lock() || g_yoloHandle == nullptr)
     {
         return;
     }
+
+    std::copy(frame.data, frame.data + g_frameBuffer.size(), g_frameBuffer.data());
 
     yolo_image_info_t info;
     std::memset(&info, 0, sizeof(info));
     if (yolo_npu_detect(g_yoloHandle, g_frameBuffer.data(), g_frameWidth, g_frameHeight, &info) != 0)
     {
-        APP_EXCH_CERR << "[UserApp] YOLO detect failed at frame " << currentFrameId << std::endl;
+        APP_EXCH_CERR << "[UserApp] YOLO detect failed" << std::endl;
         return;
     }
 
-    APP_EXCH_COUT << "[UserApp] frame=" << currentFrameId << " detections=" << info.count << std::endl;
+    // Calculate and print FPS every 1.0 second
+    static auto lastTime = std::chrono::steady_clock::now();
+    static int frameCount = 0;
+    static std::mutex fpsMutex;
+    {
+        std::lock_guard<std::mutex> fpsLock(fpsMutex);
+        frameCount++;
+        auto currentTime = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed = currentTime - lastTime;
+        if (elapsed.count() >= 1.0)
+        {
+            double fps = frameCount / elapsed.count();
+            APP_EXCH_COUT << "[UserApp] Detection FPS: " << fps << std::endl;
+            frameCount = 0;
+            lastTime = currentTime;
+        }
+    }
+
+    APP_EXCH_COUT << "[UserApp] detections=" << info.count << std::endl;
 
     auto appendUint16 = [](std::vector<uint8_t> &vec, uint16_t val)
     {
@@ -225,7 +236,7 @@ extern "C" void UserAppExChange(UserAppData data)
         {
             data.pushBoradcastData(broadcastData);
 
-#if(USERAPP_ENABLE_PRINT_EXCHANGE)
+#if (USERAPP_ENABLE_PRINT_EXCHANGE)
             {
                 std::string hexStr;
                 char hexBuf[16];

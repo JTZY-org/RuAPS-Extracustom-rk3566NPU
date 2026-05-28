@@ -34,8 +34,8 @@
     if (USERAPP_ENABLE_PRINT_EXCHANGE) \
     std::cout
 #define APP_EXCH_CERR                  \
-    if (USERAPP_ENABLE_PRINT_EXCHNGE) \
-    std::cerrA
+    if (USERAPP_ENABLE_PRINT_EXCHANGE) \
+    std::cerr
 
 #ifndef USERAPP_DEFAULT_YOLO_MODEL
 #define USERAPP_DEFAULT_YOLO_MODEL "/etc/rknn/yolov8n.rknn"

@@ -48,7 +48,8 @@
 
 namespace
 {
-    std::vector<uint8_t> g_frameBuffer;
+    uint8_t* g_frameBuffer = nullptr;
+    size_t g_frameBufferSize = 0;
     int g_frameWidth = 0;
     int g_frameHeight = 0;
     unsigned int g_framePixFormat = 0;
@@ -112,7 +113,16 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_framePixFormat = vinfo.PixFormat;
 
     const size_t frameSize = static_cast<size_t>(g_frameWidth) * static_cast<size_t>(g_frameHeight) * 3 / 2;
-    g_frameBuffer.assign(frameSize, 0);
+    if (g_frameBuffer != nullptr)
+    {
+        free(g_frameBuffer);
+    }
+    g_frameBufferSize = frameSize;
+    if (posix_memalign((void **)&g_frameBuffer, 4096, g_frameBufferSize) != 0)
+    {
+        g_frameBuffer = nullptr;
+        g_frameBufferSize = 0;
+    }
 
     APP_INIT_COUT << "[UserApp] RKNN input buffer: "
                   << frameSize << " bytes, " << g_frameWidth << "x" << g_frameHeight << std::endl;
@@ -151,15 +161,15 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 extern "C" void UserAppExChange(UserAppData data)
 {
     const auto &frame = data.cameraFrame;
-    if (frame.data == nullptr || frame.size == 0 || g_frameBuffer.empty())
+    if (frame.data == nullptr || frame.size == 0 || g_frameBuffer == nullptr)
     {
         return;
     }
 
-    if (frame.size < g_frameBuffer.size())
+    if (frame.size < g_frameBufferSize)
     {
         APP_EXCH_CERR << "[UserApp] Frame is smaller than expected NV12 size: "
-                      << frame.size << " < " << g_frameBuffer.size() << std::endl;
+                      << frame.size << " < " << g_frameBufferSize << std::endl;
         return;
     }
 
@@ -169,11 +179,11 @@ extern "C" void UserAppExChange(UserAppData data)
         return;
     }
 
-    std::copy(frame.data, frame.data + g_frameBuffer.size(), g_frameBuffer.data());
+    std::copy(frame.data, frame.data + g_frameBufferSize, g_frameBuffer);
 
     yolo_image_info_t info;
     std::memset(&info, 0, sizeof(info));
-    if (yolo_npu_detect(g_yoloHandle, g_frameBuffer.data(), g_frameWidth, g_frameHeight, &info) != 0)
+    if (yolo_npu_detect(g_yoloHandle, g_frameBuffer, g_frameWidth, g_frameHeight, &info) != 0)
     {
         APP_EXCH_CERR << "[UserApp] YOLO detect failed" << std::endl;
         return;
@@ -255,4 +265,10 @@ extern "C" void UserAppExChange(UserAppData data)
 __attribute__((destructor)) static void UserAppCleanup()
 {
     destroyYolo();
+    if (g_frameBuffer != nullptr)
+    {
+        free(g_frameBuffer);
+        g_frameBuffer = nullptr;
+        g_frameBufferSize = 0;
+    }
 }

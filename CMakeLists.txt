@@ -19,6 +19,10 @@ set(RKNN_MODEL_ZOO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/rknn_model_zoo")
 
 set(TARGET_SOC "rk356x" CACHE STRING "Rockchip SoC" FORCE)
 
+set(CMAKE_BUILD_TARGET buildroot CACHE STRING "RGA build target" FORCE)
+set(RGA_SAMPLES_ENABLE OFF CACHE BOOL "RGA samples enable" FORCE)
+add_subdirectory(librga)
+
 add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/3rdparty" userapp_rknn_3rdparty.out)
 add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/utils" userapp_rknn_utils.out)
 

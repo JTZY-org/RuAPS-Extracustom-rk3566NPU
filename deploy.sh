@@ -22,7 +22,7 @@ echo ">>> Step 1: Deploying shared libraries (.so) to target's /lib/..."
 # Collect target .so files
 SO_FILES=(
     "${BUILD_DIR}/libUserApp.so"
-    "${THIRDPARTY_DIR}/lib/librga.so"
+    "${BUILD_DIR}/librga/librga.so"
     "${THIRDPARTY_DIR}/lib/librknnrt.so"
 )
 

@@ -1,0 +1,3 @@
+[submodule "librga"]
+	path = librga
+	url = https://github.com/TSKangetsu/rockchip-librga

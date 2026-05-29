@@ -7,6 +7,9 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
+
+static pthread_mutex_t g_rga_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #include "im2d.h"
 #include "drmrga.h"
@@ -570,6 +573,7 @@ int get_image_size(const image_buffer_t* image)
 
 static int convert_image_rga(image_buffer_t* src_img, image_buffer_t* dst_img, image_rect_t* src_box, image_rect_t* dst_box, char color)
 {
+    pthread_mutex_lock(&g_rga_mutex);
     int ret = 0;
 
     int srcWidth = src_img->width;
@@ -740,6 +744,7 @@ err:
     }
 
     // printf("finish\n");
+    pthread_mutex_unlock(&g_rga_mutex);
     return ret;
 }
 

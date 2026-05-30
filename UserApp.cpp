@@ -13,6 +13,7 @@
 #include <chrono>
 
 #include "yolo_npu.h"
+#include "im2d.hpp"
 
 #define USERAPP_ENABLE_PRINT_INIT 1
 #ifndef USERAPP_ENABLE_PRINT_INIT
@@ -23,6 +24,8 @@
 #ifndef USERAPP_ENABLE_PRINT_EXCHANGE
 #define USERAPP_ENABLE_PRINT_EXCHANGE 1
 #endif
+
+#define USERAPP_ENABLE_RGA_ROTATION 1
 
 #define APP_INIT_COUT              \
     if (USERAPP_ENABLE_PRINT_INIT) \
@@ -53,6 +56,7 @@ namespace
     int g_frameWidth = 0;
     int g_frameHeight = 0;
     unsigned int g_framePixFormat = 0;
+    rga_buffer_handle_t g_dstRgaHandle = 0;
 
     void *g_yoloHandle = nullptr;
     std::vector<std::string> g_labels;
@@ -111,8 +115,14 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_frameWidth = vinfo.ImgWidth;
     g_frameHeight = vinfo.ImgHeight;
     g_framePixFormat = vinfo.PixFormat;
-
     const size_t frameSize = static_cast<size_t>(g_frameWidth) * static_cast<size_t>(g_frameHeight) * 3 / 2;
+#if USERAPP_ENABLE_RGA_ROTATION
+    if (g_dstRgaHandle != 0)
+    {
+        releasebuffer_handle(g_dstRgaHandle);
+        g_dstRgaHandle = 0;
+    }
+#endif
     if (g_frameBuffer != nullptr)
     {
         free(g_frameBuffer);
@@ -123,6 +133,12 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
         g_frameBuffer = nullptr;
         g_frameBufferSize = 0;
     }
+#if USERAPP_ENABLE_RGA_ROTATION
+    else
+    {
+        g_dstRgaHandle = importbuffer_virtualaddr(g_frameBuffer, g_frameBufferSize);
+    }
+#endif
 
     APP_INIT_COUT << "[UserApp] RKNN input buffer: "
                   << frameSize << " bytes, " << g_frameWidth << "x" << g_frameHeight << std::endl;
@@ -179,7 +195,28 @@ extern "C" void UserAppExChange(UserAppData data)
         return;
     }
 
+#if USERAPP_ENABLE_RGA_ROTATION
+    // Rotate the NV12 input frame by 180 degrees using hardware RGA
+    rga_buffer_handle_t src_handle = importbuffer_virtualaddr(const_cast<uint8_t*>(frame.data), g_frameBufferSize);
+    if (src_handle != 0 && g_dstRgaHandle != 0)
+    {
+        rga_buffer_t src_img = wrapbuffer_handle(src_handle, g_frameWidth, g_frameHeight, RK_FORMAT_YCbCr_420_SP);
+        rga_buffer_t dst_img = wrapbuffer_handle(g_dstRgaHandle, g_frameWidth, g_frameHeight, RK_FORMAT_YCbCr_420_SP);
+        
+        IM_STATUS ret = imrotate(src_img, dst_img, IM_HAL_TRANSFORM_ROT_180);
+        if (ret != IM_STATUS_SUCCESS)
+        {
+            APP_EXCH_CERR << "[UserApp] RGA imrotate failed: " << ret << std::endl;
+        }
+        releasebuffer_handle(src_handle);
+    }
+    else
+    {
+        APP_EXCH_CERR << "[UserApp] Failed to import src_handle or dst_handle was null!" << std::endl;
+    }
+#else
     std::copy(frame.data, frame.data + g_frameBufferSize, g_frameBuffer);
+#endif
 
     yolo_image_info_t info;
     std::memset(&info, 0, sizeof(info));
@@ -265,6 +302,13 @@ extern "C" void UserAppExChange(UserAppData data)
 __attribute__((destructor)) static void UserAppCleanup()
 {
     destroyYolo();
+#if USERAPP_ENABLE_RGA_ROTATION
+    if (g_dstRgaHandle != 0)
+    {
+        releasebuffer_handle(g_dstRgaHandle);
+        g_dstRgaHandle = 0;
+    }
+#endif
     if (g_frameBuffer != nullptr)
     {
         free(g_frameBuffer);

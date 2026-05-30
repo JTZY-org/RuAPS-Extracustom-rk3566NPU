@@ -13,6 +13,8 @@ target_compile_features(UserApp PRIVATE cxx_std_17)
 
 target_include_directories(UserApp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/librga/im2d_api
+    ${CMAKE_CURRENT_SOURCE_DIR}/librga/include
 )
 
 set(RKNN_MODEL_ZOO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/rknn_model_zoo")
@@ -27,7 +29,7 @@ add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/3rdparty" userapp_rknn_3rdparty.out)
 add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/utils" userapp_rknn_utils.out)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/yolo_npu" userapp_yolo_npu.out)
-target_link_libraries(UserApp PRIVATE userapp_yolo_npu)
+target_link_libraries(UserApp PRIVATE userapp_yolo_npu rga)
 
 target_compile_definitions(UserApp PRIVATE
     USERAPP_DEFAULT_YOLO_MODEL="/etc/rknn/yolov8n.rknn"

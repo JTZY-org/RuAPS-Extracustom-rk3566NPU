@@ -51,7 +51,7 @@
 
 namespace
 {
-    uint8_t* g_frameBuffer = nullptr;
+    uint8_t *g_frameBuffer = nullptr;
     size_t g_frameBufferSize = 0;
     int g_frameWidth = 0;
     int g_frameHeight = 0;
@@ -197,12 +197,12 @@ extern "C" void UserAppExChange(UserAppData data)
 
 #if USERAPP_ENABLE_RGA_ROTATION
     // Rotate the NV12 input frame by 180 degrees using hardware RGA
-    rga_buffer_handle_t src_handle = importbuffer_virtualaddr(const_cast<uint8_t*>(frame.data), g_frameBufferSize);
+    rga_buffer_handle_t src_handle = importbuffer_virtualaddr(const_cast<uint8_t *>(frame.data), g_frameBufferSize);
     if (src_handle != 0 && g_dstRgaHandle != 0)
     {
         rga_buffer_t src_img = wrapbuffer_handle(src_handle, g_frameWidth, g_frameHeight, RK_FORMAT_YCbCr_420_SP);
         rga_buffer_t dst_img = wrapbuffer_handle(g_dstRgaHandle, g_frameWidth, g_frameHeight, RK_FORMAT_YCbCr_420_SP);
-        
+
         IM_STATUS ret = imrotate(src_img, dst_img, IM_HAL_TRANSFORM_ROT_180);
         if (ret != IM_STATUS_SUCCESS)
         {
@@ -295,6 +295,20 @@ extern "C" void UserAppExChange(UserAppData data)
                 std::cout << "[UserApp] Sent broadcast data (Hex): " << hexStr << std::endl;
             }
 #endif
+        }
+    }
+
+    {
+        // TODO: apm control test
+        // std::cout << *data.APMData._NAV_Relative_Pos[0] << " " << *data.APMData._NAV_Relative_Pos[1] << " " << *data.APMData._NAV_Relative_Pos[2] << "\n";
+        // std::cout << *data.APMData._RC_Channel_Raw[7] << " " << *data.APMData._Battery_Voltage << "\n";
+        if (*data.APMData._RC_Channel_Raw[7] <= 2050 && *data.APMData._RC_Channel_Raw[7] >= 1900)
+        {
+            data.APMData.APMControllerARM();
+        }
+        else
+        {
+            data.APMData.APMControllerDISARM();
         }
     }
 }

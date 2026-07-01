@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <chrono>
 
 #include "yolov8.h"
 #include "common.h"
@@ -157,18 +158,28 @@ int NC1HWC2_i8_to_NCHW_i8(const int8_t *src, int8_t *dst, int *dims, int channel
     int C2     = dims[4];
     int hw_src = dims[2] * dims[3];
     int hw_dst = h * w;
+    
     for (int i = 0; i < batch; i++) {
         const int8_t *src_b = src + i * C1 * hw_src * C2;
         int8_t        *dst_b = dst + i * channel * hw_dst;
-        for (int c = 0; c < channel; ++c) {
-            int           plane  = c / C2;
-            const int8_t *src_bc = plane * hw_src * C2 + src_b;
-            int           offset = c % C2;
-            for (int cur_h = 0; cur_h < h; ++cur_h)
-                for (int cur_w = 0; cur_w < w; ++cur_w) {
-                    int cur_hw                 = cur_h * w + cur_w;
-                    dst_b[c * hw_dst + cur_hw] = src_bc[C2 * cur_hw + offset] ; // int8-->int8
+        
+        for (int plane = 0; plane < C1; ++plane) {
+            const int8_t *src_plane = src_b + plane * hw_src * C2;
+            int c_base = plane * C2;
+            
+            for (int offset = 0; offset < C2; ++offset) {
+                int c = c_base + offset;
+                if (c >= channel) {
+                    continue;
                 }
+                
+                const int8_t *src_bc = src_plane + offset;
+                int8_t *dst_bc = dst_b + c * hw_dst;
+                
+                for (int cur_hw = 0; cur_hw < hw_dst; ++cur_hw) {
+                    dst_bc[cur_hw] = src_bc[C2 * cur_hw];
+                }
+            }
         }
     }
 
@@ -231,6 +242,11 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     const float nms_threshold = NMS_THRESH;      // 默认的NMS阈值
     const float box_conf_threshold = BOX_THRESH; // 默认的置信度阈值
     int bg_color = 114;
+    double t_letterbox = 0;
+    double t_run = 0;
+    double t_layout_cvt = 0;
+    double t_post_process = 0;
+    std::chrono::high_resolution_clock::time_point start_time;
 
     if ((!app_ctx) || !(img) || (!od_results)) {
         return -1;
@@ -245,29 +261,39 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     dst_img.height = app_ctx->model_height;
     dst_img.format = IMAGE_FORMAT_RGB888;
     dst_img.size = get_image_size(&dst_img);
-    dst_img.fd = app_ctx->input_mems[0]->fd;
-    dst_img.virt_addr = (unsigned char*)app_ctx->input_mems[0]->virt_addr;
+    dst_img.fd = -1;
+    dst_img.virt_addr = (unsigned char*)malloc(dst_img.size);
 
-    if (dst_img.virt_addr == NULL && dst_img.fd == 0) {
+    if (dst_img.virt_addr == NULL) {
         printf("malloc buffer size:%d fail!\n", dst_img.size);
         return -1;
     }
 
     // letterbox
+    start_time = std::chrono::high_resolution_clock::now();
     ret = convert_image_with_letterbox(img, &dst_img, &letter_box, bg_color);
     if (ret < 0) {
         printf("convert_image_with_letterbox fail! ret=%d\n", ret);
+        free(dst_img.virt_addr);
         return -1;
     }
 
+    // Copy the processed image data to the zero-copy NPU input memory
+    memcpy(app_ctx->input_mems[0]->virt_addr, dst_img.virt_addr, dst_img.size);
+    free(dst_img.virt_addr);
+    t_letterbox = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+
     // Run
+    start_time = std::chrono::high_resolution_clock::now();
     ret = rknn_run(app_ctx->rknn_ctx, nullptr);
+    t_run = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
     if (ret < 0) {
         printf("rknn_run fail! ret=%d\n", ret);
         return -1;
     }
 
     //NC1HWC2 to NCHW
+    start_time = std::chrono::high_resolution_clock::now();
     rknn_output outputs[app_ctx->io_num.n_output];
     memset(outputs, 0, sizeof(outputs));
     for (uint32_t i = 0; i < app_ctx->io_num.n_output; i++) {
@@ -281,8 +307,15 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
             outputs[i].size = app_ctx->output_native_attrs[i].n_elems * sizeof(int8_t);
             outputs[i].buf = (int8_t *)malloc(outputs[i].size);
             if (app_ctx->output_native_attrs[i].fmt == RKNN_TENSOR_NC1HWC2) {
-                NC1HWC2_i8_to_NCHW_i8((int8_t *)app_ctx->output_mems[i]->virt_addr, (int8_t *)outputs[i].buf,
+                // NPU memory is uncached. Copying it to a cacheable CPU memory first via block memcpy
+                // avoids massive CPU cache-miss stalls when reading strided NC1HWC2 bytes.
+                int8_t *cached_temp = (int8_t *)malloc(outputs[i].size);
+                memcpy(cached_temp, app_ctx->output_mems[i]->virt_addr, outputs[i].size);
+                
+                NC1HWC2_i8_to_NCHW_i8(cached_temp, (int8_t *)outputs[i].buf,
                                       (int *)app_ctx->output_native_attrs[i].dims, channel, h, w, zp, scale);
+                
+                free(cached_temp);
             } else {
                 memcpy(outputs[i].buf, app_ctx->output_mems[i]->virt_addr, outputs[i].size);
             }
@@ -291,13 +324,23 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
             goto out;
         }
     }
+    t_layout_cvt = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
 
     // Post Process
+    start_time = std::chrono::high_resolution_clock::now();
     post_process(app_ctx, outputs, &letter_box, box_conf_threshold, nms_threshold, od_results);
+    t_post_process = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
 
     for (int i = 0; i < app_ctx->io_num.n_output; i++) {
         free(outputs[i].buf);
     }
+
+    // Print stats every frame to avoid waiting at low FPS
+    static int frame_count = 0;
+    // if (++frame_count % 1 == 0) {
+        // printf("[Profiling Zero-Copy] letterbox+copy: %.2f ms | rknn_run: %.2f ms | layout_cvt: %.2f ms | post_process: %.2f ms\n",
+    //            t_letterbox, t_run, t_layout_cvt, t_post_process);
+    // }
 
 out:
     return ret;

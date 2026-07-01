@@ -15,7 +15,7 @@ set(_yolov8_cpp "${RKNN_MODEL_ZOO_ROOT}/examples/yolov8/cpp")
 add_library(userapp_yolo_npu STATIC
     yolo_npu.cpp
     "${_yolov8_cpp}/postprocess.cc"
-    "${_yolov8_cpp}/rknpu2/yolov8.cc"
+    "${_yolov8_cpp}/rknpu2/yolov8_zero_copy.cc"
 )
 
 set_target_properties(userapp_yolo_npu PROPERTIES
@@ -31,6 +31,8 @@ target_include_directories(userapp_yolo_npu PRIVATE
     "${LIBRKNNRT_INCLUDES}"
     "${RKNN_MODEL_ZOO_ROOT}/utils"
 )
+
+target_compile_definitions(userapp_yolo_npu PUBLIC ZERO_COPY)
 
 target_link_libraries(userapp_yolo_npu PUBLIC
     imageutils

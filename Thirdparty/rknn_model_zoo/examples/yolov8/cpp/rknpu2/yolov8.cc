@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <chrono>
 
 #include "yolov8.h"
 #include "common.h"
@@ -37,7 +38,7 @@ int init_yolov8_model(const char *model_path, rknn_app_context_t *app_ctx)
         return -1;
     }
 
-    ret = rknn_init(&ctx, model, model_len, 0, NULL);
+    ret = rknn_init(&ctx, model, model_len, RKNN_FLAG_ASYNC_MASK, NULL);
     free(model);
     if (ret < 0)
     {
@@ -146,6 +147,13 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     const float nms_threshold = NMS_THRESH;      // 默认的NMS阈值
     const float box_conf_threshold = BOX_THRESH; // 默认的置信度阈值
     int bg_color = 114;
+    double t_letterbox = 0;
+    double t_inputs_set = 0;
+    double t_run = 0;
+    double t_outputs_get = 0;
+    double t_post_process = 0;
+    double t_release = 0;
+    std::chrono::high_resolution_clock::time_point start_time;
 
     if ((!app_ctx) || !(img) || (!od_results))
     {
@@ -171,7 +179,9 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     }
 
     // letterbox
+    start_time = std::chrono::high_resolution_clock::now();
     ret = convert_image_with_letterbox(img, &dst_img, &letter_box, bg_color);
+    t_letterbox = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
     if (ret < 0)
     {
         printf("convert_image_with_letterbox fail! ret=%d\n", ret);
@@ -185,7 +195,9 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     inputs[0].size = app_ctx->model_width * app_ctx->model_height * app_ctx->model_channel;
     inputs[0].buf = dst_img.virt_addr;
 
+    start_time = std::chrono::high_resolution_clock::now();
     ret = rknn_inputs_set(app_ctx->rknn_ctx, app_ctx->io_num.n_input, inputs);
+    t_inputs_set = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
     if (ret < 0)
     {
         printf("rknn_input_set fail! ret=%d\n", ret);
@@ -193,7 +205,9 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     }
 
     // Run
+    start_time = std::chrono::high_resolution_clock::now();
     ret = rknn_run(app_ctx->rknn_ctx, nullptr);
+    t_run = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
     if (ret < 0)
     {
         printf("rknn_run fail! ret=%d\n", ret);
@@ -207,7 +221,9 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
         outputs[i].index = i;
         outputs[i].want_float = (!app_ctx->is_quant);
     }
+    start_time = std::chrono::high_resolution_clock::now();
     ret = rknn_outputs_get(app_ctx->rknn_ctx, app_ctx->io_num.n_output, outputs, NULL);
+    t_outputs_get = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
     if (ret < 0)
     {
         printf("rknn_outputs_get fail! ret=%d\n", ret);
@@ -215,10 +231,21 @@ int inference_yolov8_model(rknn_app_context_t *app_ctx, image_buffer_t *img, obj
     }
 
     // Post Process
+    start_time = std::chrono::high_resolution_clock::now();
     post_process(app_ctx, outputs, &letter_box, box_conf_threshold, nms_threshold, od_results);
+    t_post_process = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
 
     // Remeber to release rknn output
+    start_time = std::chrono::high_resolution_clock::now();
     rknn_outputs_release(app_ctx->rknn_ctx, app_ctx->io_num.n_output, outputs);
+    t_release = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+
+    // Print stats every 60 frames to avoid console flood
+    static int frame_count = 0;
+    // if (++frame_count % 60 == 0) {
+    //     printf("[Profiling] letterbox: %.2f ms | inputs_set: %.2f ms | rknn_run: %.2f ms | outputs_get: %.2f ms | post_process: %.2f ms | release: %.2f ms\n",
+    //            t_letterbox, t_inputs_set, t_run, t_outputs_get, t_post_process, t_release);
+    // }
 
 out:
     if (dst_img.virt_addr != NULL)

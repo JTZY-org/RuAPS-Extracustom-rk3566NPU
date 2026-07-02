@@ -39,6 +39,13 @@ typedef struct {
     yolo_det_t detections[128]; // 识别到的目标列表
 } yolo_image_info_t;
 
+#ifdef __cplusplus
+} // extern "C"
+#include <functional>
+typedef std::function<void(const yolo_image_info_t& info)> yolo_npu_callback_t;
+extern "C" {
+#endif
+
 /**
  * 初始化推理环境
  * @param model_path 模型文件路径 (.rknn)
@@ -71,7 +78,7 @@ YOLO_NPU_API int yolo_npu_get_result(yolo_image_info_t* info, int index, yolo_de
  * 直接运行缓冲区数据处理
  * @param model_path 模型路径
  * @param data 图像数据缓冲区（NV12/YUV420SP，与 width/height 对应）
- * @param size 缓冲区总大小，须 >= width*height*3/2（单帧），可为多帧连续数据
+ * @param size 缓冲区总大小，须 >= width*height*3/2（单帧），可为多帧连续 data
  * @param width 图像宽度（像素）
  * @param height 图像高度（像素）
  * @param out_path 保存识别结果的路径
@@ -89,6 +96,13 @@ YOLO_NPU_API int yolo_npu_run_buffer(const char* model_path, uint8_t* data, size
 YOLO_NPU_API void yolo_npu_draw_rectangle(uint8_t* nv12_data, int width, int height, int x, int y, int w, int h, unsigned int color, int thickness);
 YOLO_NPU_API void yolo_npu_draw_text(uint8_t* nv12_data, int width, int height, const char* text, int x, int y, unsigned int color, int fontsize);
 YOLO_NPU_API const char* yolo_npu_coco_cls_to_name(int cls_id);
+
+#ifdef __cplusplus
+} // extern "C"
+YOLO_NPU_API int yolo_npu_detect_async(void* handle, uint8_t* nv12_data, int width, int height, yolo_npu_callback_t callback);
+YOLO_NPU_API bool yolo_npu_is_busy(void* handle);
+extern "C" {
+#endif
 
 #ifdef __cplusplus
 }

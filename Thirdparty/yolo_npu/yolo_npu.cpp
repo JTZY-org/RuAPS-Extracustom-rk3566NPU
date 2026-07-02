@@ -10,6 +10,11 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <algorithm>
 
 #include "yolov8.h"
 #include "postprocess.h"
@@ -21,7 +26,87 @@ extern "C" {
 }
 
 struct YoloNpuHandle {
-    rknn_app_context_t rknn_ctx;
+    rknn_app_context_t rknn_ctx[2];
+    std::thread worker_threads[2];
+    bool worker_busy[2];
+    int worker_buffer_idx[2];
+    std::atomic<bool> worker_running[2];
+    yolo_npu_callback_t worker_callbacks[2];
+    std::mutex worker_mutex[2];
+    std::condition_variable worker_cv[2];
+    std::mutex scheduler_mutex;
+
+    uint8_t* frame_buffers[3];
+    size_t frame_buffer_size;
+    int frame_width;
+    int frame_height;
+    int write_buffer_idx;
+
+    void worker_thread_func(int id) {
+        while (worker_running[id]) {
+            // Block until worker is marked busy
+            {
+                std::unique_lock<std::mutex> lock(worker_mutex[id]);
+                worker_cv[id].wait(lock, [this, id] { return worker_busy[id] || !worker_running[id]; });
+                if (!worker_running[id]) {
+                    break;
+                }
+            }
+
+            int bufIdx = -1;
+            yolo_npu_callback_t callback;
+
+            {
+                std::lock_guard<std::mutex> lock(scheduler_mutex);
+                bufIdx = worker_buffer_idx[id];
+                callback = worker_callbacks[id];
+            }
+
+            if (bufIdx != -1 && frame_buffers[bufIdx] != nullptr) {
+                image_buffer_t img {};
+                img.width = frame_width;
+                img.height = frame_height;
+                img.height_stride = img.height;
+                img.format = IMAGE_FORMAT_YUV420SP_NV12;
+                img.size = static_cast<int>(frame_buffer_size);
+                img.fd = -1;
+                img.virt_addr = frame_buffers[bufIdx];
+                img.width_stride = frame_width;
+
+                object_detect_result_list od_results {};
+                if (inference_yolov8_model(&rknn_ctx[id], &img, &od_results) == 0) {
+                    if (callback) {
+                        yolo_image_info_t info;
+                        std::memset(&info, 0, sizeof(info));
+                        info.data = frame_buffers[bufIdx];
+                        info.width = frame_width;
+                        info.height = frame_height;
+                        info.count = od_results.count;
+                        if (info.count > 128) info.count = 128;
+
+                        for (int i = 0; i < info.count; i++) {
+                            object_detect_result* det = &od_results.results[i];
+                            info.detections[i].x1 = det->box.left;
+                            info.detections[i].y1 = det->box.top;
+                            info.detections[i].x2 = det->box.right;
+                            info.detections[i].y2 = det->box.bottom;
+                            info.detections[i].cls_id = det->cls_id;
+                            info.detections[i].prob = det->prop;
+                        }
+                        callback(info);
+                    }
+                } else {
+                    std::cerr << "[yolo_npu] Worker " << id << " YOLO detect failed" << std::endl;
+                }
+            }
+
+            // Mark worker as idle under scheduler mutex
+            {
+                std::lock_guard<std::mutex> lock(scheduler_mutex);
+                worker_busy[id] = false;
+            }
+        }
+    }
 };
 
 extern "C" YOLO_NPU_API const char* yolo_npu_api_version(void) {
@@ -36,13 +121,40 @@ extern "C" YOLO_NPU_API void* yolo_npu_create(const char* model_path, const char
         std::cerr << "yolo_npu_create: 标签文件加载失败，推理仍继续（画框文字可能显示 null）\n";
     }
     auto* h = new YoloNpuHandle();
-    std::memset(&h->rknn_ctx, 0, sizeof(h->rknn_ctx));
-    if (init_yolov8_model(model_path, &h->rknn_ctx) != 0) {
-        std::cerr << "yolo_npu_create: init_yolov8_model 失败\n";
-        deinit_post_process();
-        delete h;
-        return nullptr;
+    
+    // Initialize NPU contexts
+    for (int i = 0; i < 2; i++) {
+        std::memset(&h->rknn_ctx[i], 0, sizeof(h->rknn_ctx[i]));
+        if (init_yolov8_model(model_path, &h->rknn_ctx[i]) != 0) {
+            std::cerr << "yolo_npu_create: init_yolov8_model " << i << " 失败\n";
+            // Clean up already initialized contexts
+            for (int j = 0; j < i; j++) {
+                release_yolov8_model(&h->rknn_ctx[j]);
+            }
+            deinit_post_process();
+            delete h;
+            return nullptr;
+        }
     }
+
+    // Initialize state
+    h->frame_buffer_size = 0;
+    h->frame_width = 0;
+    h->frame_height = 0;
+    h->write_buffer_idx = 2;
+    h->worker_buffer_idx[0] = 0;
+    h->worker_buffer_idx[1] = 1;
+    for (int i = 0; i < 3; i++) {
+        h->frame_buffers[i] = nullptr;
+    }
+
+    // Start background threads
+    for (int i = 0; i < 2; i++) {
+        h->worker_busy[i] = false;
+        h->worker_running[i] = true;
+        h->worker_threads[i] = std::thread(&YoloNpuHandle::worker_thread_func, h, i);
+    }
+
     return h;
 }
 
@@ -51,8 +163,30 @@ extern "C" YOLO_NPU_API void yolo_npu_destroy(void* handle) {
         return;
     }
     auto* h = static_cast<YoloNpuHandle*>(handle);
-    release_yolov8_model(&h->rknn_ctx);
+
+    // Stop threads
+    for (int i = 0; i < 2; i++) {
+        h->worker_running[i] = false;
+        h->worker_cv[i].notify_all();
+        if (h->worker_threads[i].joinable()) {
+            h->worker_threads[i].join();
+        }
+    }
+
+    // Release NPU models
+    for (int i = 0; i < 2; i++) {
+        release_yolov8_model(&h->rknn_ctx[i]);
+    }
     deinit_post_process();
+
+    // Free buffers
+    for (int i = 0; i < 3; i++) {
+        if (h->frame_buffers[i] != nullptr) {
+            free(h->frame_buffers[i]);
+            h->frame_buffers[i] = nullptr;
+        }
+    }
+
     delete h;
 }
 
@@ -76,7 +210,7 @@ extern "C" YOLO_NPU_API int yolo_npu_detect(void* handle, uint8_t* nv12_data, in
     img.width_stride = static_cast<int>(cap_w);
 
     object_detect_result_list od_results {};
-    if (inference_yolov8_model(&h->rknn_ctx, &img, &od_results) != 0) {
+    if (inference_yolov8_model(&h->rknn_ctx[0], &img, &od_results) != 0) {
         return -1;
     }
 
@@ -98,6 +232,95 @@ extern "C" YOLO_NPU_API int yolo_npu_detect(void* handle, uint8_t* nv12_data, in
     }
 
     return 0;
+}
+
+YOLO_NPU_API int yolo_npu_detect_async(void* handle, uint8_t* nv12_data, int width, int height, yolo_npu_callback_t callback) {
+    if (!handle || !nv12_data || width < 2 || height < 2) {
+        return -1;
+    }
+    auto* h = static_cast<YoloNpuHandle*>(handle);
+
+    const size_t needed_size = static_cast<size_t>(width) * height * 3 / 2;
+
+    // 1. Lazy allocate/reallocate buffers if width/height changed
+    {
+        std::lock_guard<std::mutex> lock(h->scheduler_mutex);
+        if (h->frame_width != width || h->frame_height != height) {
+            // Free old buffers if allocated
+            for (int i = 0; i < 3; i++) {
+                if (h->frame_buffers[i] != nullptr) {
+                    free(h->frame_buffers[i]);
+                    h->frame_buffers[i] = nullptr;
+                }
+            }
+            // Allocate new buffers
+            h->frame_width = width;
+            h->frame_height = height;
+            h->frame_buffer_size = needed_size;
+            
+            bool success = true;
+            for (int i = 0; i < 3; i++) {
+                if (posix_memalign((void **)&h->frame_buffers[i], 4096, h->frame_buffer_size) != 0) {
+                    h->frame_buffers[i] = nullptr;
+                    success = false;
+                }
+            }
+            if (!success) {
+                h->frame_buffer_size = 0;
+                h->frame_width = 0;
+                h->frame_height = 0;
+                std::cerr << "[yolo_npu] Failed to allocate buffers" << std::endl;
+                return -1;
+            }
+            h->write_buffer_idx = 2;
+            h->worker_buffer_idx[0] = 0;
+            h->worker_buffer_idx[1] = 1;
+        }
+    }
+
+    // 2. Find an idle worker
+    int target_worker = -1;
+    {
+        std::lock_guard<std::mutex> lock(h->scheduler_mutex);
+        for (int i = 0; i < 2; i++) {
+            if (h->worker_running[i] && !h->worker_busy[i]) {
+                target_worker = i;
+                h->worker_busy[i] = true;
+                break;
+            }
+        }
+    }
+
+    if (target_worker == -1) {
+        // Both workers busy, skip this frame
+        return 0; // Return 0 to indicate skipped but not fatal error
+    }
+
+    // 3. Copy input frame into active write buffer
+    std::copy(nv12_data, nv12_data + h->frame_buffer_size, h->frame_buffers[h->write_buffer_idx]);
+
+    // 4. Swap buffer and set callback
+    {
+        std::lock_guard<std::mutex> lock(h->scheduler_mutex);
+        std::swap(h->write_buffer_idx, h->worker_buffer_idx[target_worker]);
+        h->worker_callbacks[target_worker] = callback;
+    }
+
+    // 5. Wake up worker
+    {
+        std::lock_guard<std::mutex> lock(h->worker_mutex[target_worker]);
+        // Lock and notify
+    }
+    h->worker_cv[target_worker].notify_one();
+
+    return 0;
+}
+
+YOLO_NPU_API bool yolo_npu_is_busy(void* handle) {
+    if (!handle) return true;
+    auto* h = static_cast<YoloNpuHandle*>(handle);
+    std::lock_guard<std::mutex> lock(h->scheduler_mutex);
+    return h->worker_busy[0] && h->worker_busy[1];
 }
 
 extern "C" YOLO_NPU_API int yolo_npu_get_result(yolo_image_info_t* info, int index, yolo_det_t* out_det) {

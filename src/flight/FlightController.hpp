@@ -20,7 +20,8 @@ public:
 
         while (!data.BoradCastRecv->empty())
         {
-            const auto &packet = data.BoradCastRecv->front();
+            auto packet = std::move(data.BoradCastRecv->front());
+            data.BoradCastRecv->pop_front();
 
             // Print hex representation
             LOG_EXCH << "[FlightController] Recv Broadcast (HEX):";
@@ -35,15 +36,15 @@ public:
             {
                 if (packet[1] == 0x01 && data.APMData.APMControllerARM)
                 {
+                    std::cout << "arm\n";
                     data.APMData.APMControllerARM();
                 }
                 else if (packet[1] == 0x00 && data.APMData.APMControllerDISARM)
                 {
+                    std::cout << "disarm\n";
                     data.APMData.APMControllerDISARM();
                 }
             }
-
-            data.BoradCastRecv->pop_front();
         }
     }
 };

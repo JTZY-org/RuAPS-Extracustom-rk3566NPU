@@ -49,11 +49,11 @@ struct ControllerData
 
     double *_CPU_Core_Temp;
 
-    std::function<void(void)> APMControllerARM;
-    std::function<void(void)> APMControllerDISARM;
-    std::function<void(int x, int y, int z, bool resetHome)> APMControllerPosition;
-    std::function<void(int x, int y, int z)> APMControllerSpeed;
-    std::function<void(int pin, int PWMInUs)> APMControllerServo;
+    void (*APMControllerARM)(void);
+    void (*APMControllerDISARM)(void);
+    void (*APMControllerPosition)(int x, int y, int z, bool resetHome);
+    void (*APMControllerSpeed)(int x, int y, int z);
+    void (*APMControllerServo)(int pin, int PWMInUs);
 };
 
 struct UserAppData
@@ -61,5 +61,5 @@ struct UserAppData
     ControllerData APMData;
     V4L2Tools::V4l2Data cameraFrame;
     std::deque<std::vector<uint8_t>> *BoradCastRecv;
-    std::function<void(std::vector<uint8_t>)> pushBoradcastData;
+    void (*pushBoradcastData)(std::vector<uint8_t>);
 };

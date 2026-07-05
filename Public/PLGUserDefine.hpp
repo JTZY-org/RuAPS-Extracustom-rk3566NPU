@@ -60,5 +60,6 @@ struct UserAppData
 {
     ControllerData APMData;
     V4L2Tools::V4l2Data cameraFrame;
+    std::deque<std::vector<uint8_t>> *BoradCastRecv;
     std::function<void(std::vector<uint8_t>)> pushBoradcastData;
 };

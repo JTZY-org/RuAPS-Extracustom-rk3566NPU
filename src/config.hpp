@@ -5,8 +5,8 @@
 namespace config
 {
     // Feature and diagnostic toggles
-    inline constexpr bool ENABLE_PRINT_INIT = true;
-    inline constexpr bool ENABLE_PRINT_EXCHANGE = true;
+    inline constexpr bool ENABLE_PRINT_INIT = false;
+    inline constexpr bool ENABLE_PRINT_EXCHANGE = false;
     inline constexpr bool ENABLE_RGA_ROTATION = true;
 
     // Default paths

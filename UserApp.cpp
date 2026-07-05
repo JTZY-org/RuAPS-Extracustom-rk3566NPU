@@ -1,4 +1,9 @@
 #include "UserApp.hpp"
+#include <deque>
+#include <vector>
+#include <iostream>
+#include <iomanip>
+#include "src/config.hpp"
 #include "src/image/RgaProcessor.hpp"
 #include "src/npu/YoloEngine.hpp"
 #include "src/flight/FlightController.hpp"
@@ -19,17 +24,17 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 
 extern "C" void UserAppExChange(UserAppData data)
 {
-    // 1. Image Preprocessing (RGA Hardware Rotation, bypassed internally if disabled or NPU is busy)
+    // 1. Process and pop incoming broadcast command messages internally
+    g_flightController.processCmd(data);
+
+    // 2. Image Preprocessing (RGA Hardware Rotation, bypassed internally if NPU is busy)
     uint8_t *rotatedFrame = g_rgaProcessor.rotate180(data.cameraFrame, g_yoloEngine.isBusy());
 
-    // 2. Asynchronous NPU Detection
+    // 3. Asynchronous NPU Detection
     g_yoloEngine.detectAsync(rotatedFrame, g_rgaProcessor.getWidth(), g_rgaProcessor.getHeight(),
                              [pushCallback = data.pushBoradcastData](const yolo_image_info_t &info)
                              {
-                                 // 3. Broadcast YOLO Target Detections
+                                 // 4. Broadcast YOLO Target Detections
                                  ProtocolSerializer::broadcast(info, pushCallback, g_yoloEngine);
                              });
-
-    // 4. APM Flight Control updates
-    g_flightController.update(data.APMData);
 }

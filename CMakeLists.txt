@@ -4,12 +4,16 @@ project(ExtracustomUserApp LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build" FORCE)
 
 add_library(UserApp SHARED
     UserApp.cpp
+    src/image/RgaProcessor.cpp
+    src/npu/YoloEngine.cpp
 )
 
 target_compile_features(UserApp PRIVATE cxx_std_17)
+target_compile_options(UserApp PRIVATE -O3)
 
 target_include_directories(UserApp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

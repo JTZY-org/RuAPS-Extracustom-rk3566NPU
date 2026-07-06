@@ -121,7 +121,7 @@ public:
 
             // Unified Pre-check Filter: Reject packets unless it is emergency CC 00/01, OR (vehicle is ARMED AND (IDLE or duplicate LAND))
             if (!(packet.size() >= 2 && packet[0] == 0xCC && (packet[1] == 0x01 || packet[1] == 0x00)) &&
-                (!(data.APMData._SYS_ARMFlag != nullptr && *data.APMData._SYS_ARMFlag) ||
+                ((data.APMData._SYS_ARMFlag == nullptr || *data.APMData._SYS_ARMFlag) ||
                  (m_state != STATE_IDLE && !(packet.size() >= 2 && packet[0] == 0xB0 && packet[1] == 0x01))))
             {
                 LOG_EXCH << "[FlightController] COMMAND REJECTED - State conflict or disarmed." << std::endl;

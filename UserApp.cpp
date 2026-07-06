@@ -27,14 +27,18 @@ extern "C" void UserAppExChange(UserAppData data)
     // 1. Process and pop incoming broadcast command messages internally
     g_flightController.processCmd(data);
 
-    // 2. Image Preprocessing (RGA Hardware Rotation, bypassed internally if NPU is busy)
+    // 2. Telemetry and Landing state machine checks
+    g_flightController.updateState(data);
+
+    // 3. Image Preprocessing (RGA Hardware Rotation, bypassed internally if NPU is busy)
     uint8_t *rotatedFrame = g_rgaProcessor.rotate180(data.cameraFrame, g_yoloEngine.isBusy());
 
-    // 3. Asynchronous NPU Detection
-    g_yoloEngine.detectAsync(rotatedFrame, g_rgaProcessor.getWidth(), g_rgaProcessor.getHeight(),
-                             [pushCallback = data.pushBoradcastData](const yolo_image_info_t &info)
-                             {
-                                 // 4. Broadcast YOLO Target Detections
-                                 ProtocolSerializer::broadcast(info, pushCallback, g_yoloEngine);
-                             });
+    // 4. Asynchronous NPU Detection
+    g_yoloEngine.detectAsync(
+        rotatedFrame, g_rgaProcessor.getWidth(), g_rgaProcessor.getHeight(),
+        [pushCallback = data.pushBoradcastData](const yolo_image_info_t &info)
+        {
+            // 5. Broadcast YOLO Target Detections
+            ProtocolSerializer::broadcast(info, pushCallback, g_yoloEngine);
+        });
 }

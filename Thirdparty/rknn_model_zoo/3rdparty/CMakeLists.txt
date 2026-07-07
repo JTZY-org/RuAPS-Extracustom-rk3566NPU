@@ -56,7 +56,6 @@ set(LIBRKNNRT ${LIBRKNNRT} PARENT_SCOPE)
 # rga
 set(LIBRGA rga-static PARENT_SCOPE)
 set(LIBRGA_INCLUDES ${CMAKE_SOURCE_DIR}/librga/im2d_api ${CMAKE_SOURCE_DIR}/librga/include PARENT_SCOPE)
-install(TARGETS rga DESTINATION lib)
 
 # timer
 set(TIMER_PATH ${CMAKE_CURRENT_SOURCE_DIR}/timer)

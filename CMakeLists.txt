@@ -44,3 +44,29 @@ set_target_properties(UserApp PROPERTIES
     OUTPUT_NAME "UserApp"
     INSTALL_RPATH "$ORIGIN:$ORIGIN/Thirdparty/lib"
 )
+
+# Installation Rules
+install(TARGETS UserApp DESTINATION lib)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/lib/librknnrt.so" DESTINATION lib)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/yolov8n.rknn"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/coco_80_labels_list.txt"
+    DESTINATION etc/rknn
+)
+
+# CPack configuration
+set(CPACK_GENERATOR "DEB")
+set(CPACK_PACKAGE_NAME "extracustom-userapp")
+set(CPACK_PACKAGE_VERSION "1.0.0")
+set(CPACK_PACKAGE_CONTACT "support@extracustom.com")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Extracustom UserApp and NPU dependencies")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Developer")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+
+# Ensure installation goes to /lib and /etc instead of /usr/lib and /usr/etc
+set(CPACK_SET_DESTDIR ON)
+set(CPACK_INSTALL_PREFIX "/")
+
+include(CPack)
+

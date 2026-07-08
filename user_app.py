@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import sys
 import apm
+import time
 
 def init(width, height, pixfmt):
     """
@@ -15,11 +16,23 @@ def init(width, height, pixfmt):
     # Return 0 or initialization status
     return 0
 
-# 全局帧计数器，用于降频打印以节省 CPU
+# 全局帧计数器与时间计量，用于统计 FPS 与 Latency
 FRAME_COUNTER = 0
+LAST_CALL_TIME = None
+SUM_LATENCY = 0.0
+SUM_INTERVAL = 0.0
 
 def exchange(frame_bytes, width, height, pixfmt, telemetry):
-    global FRAME_COUNTER
+    global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL
+    start_time = time.perf_counter()
+    
+    # 统计调用帧间隔（实际呼叫 FPS）
+    current_time = start_time
+    if LAST_CALL_TIME is not None:
+        interval = current_time - LAST_CALL_TIME
+        SUM_INTERVAL += interval
+    LAST_CALL_TIME = current_time
+
     try:
         FRAME_COUNTER += 1
         
@@ -60,16 +73,26 @@ def exchange(frame_bytes, width, height, pixfmt, telemetry):
                         target_x = int(M["m10"] / M["m00"])
                         target_y = int(M["m01"] / M["m00"])
             
+            # 计算 Python 执行耗时并累加
+            latency = time.perf_counter() - start_time
+            SUM_LATENCY += latency
+
             # Only print detection result once every 30 frames
             if FRAME_COUNTER % 30 == 0:
-                target_str = f"Found: X={target_x}, Y={target_y}, Area={target_area:.1f}" if target_x != -1 else "No target"
+                avg_latency_ms = (SUM_LATENCY / 30.0) * 1000.0
+                avg_fps = 30.0 / SUM_INTERVAL if SUM_INTERVAL > 0 else 0.0
                 
+                # 重置累加器
+                SUM_LATENCY = 0.0
+                SUM_INTERVAL = 0.0
+
+                target_str = f"Found: X={target_x}, Y={target_y}, Area={target_area:.1f}" if target_x != -1 else "No target"
                 temp = telemetry.get('cpu_temp') if telemetry else None
                 volt = telemetry.get('battery_voltage') if telemetry else None
                 arm = telemetry.get('sys_arm_flag') if telemetry else None
                 
-                # Use carriage return (\r) to overwrite the line and prevent scrolling
-                sys.stdout.write(f"\r[Vision] {target_str:<35} | [Telemetry] Temp={temp}C, Bat={volt}V, Armed={arm}")
+                # 在单行中合并打印所有数据、处理帧率与耗时
+                sys.stdout.write(f"\r[Vision] {target_str:<25} | FPS: {avg_fps:.1f} | Latency: {avg_latency_ms:.2f}ms | Temp={temp}C, Bat={volt}V")
                 sys.stdout.flush()
                 
     except Exception as e:

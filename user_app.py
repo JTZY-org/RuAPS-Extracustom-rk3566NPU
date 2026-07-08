@@ -22,8 +22,12 @@ LAST_CALL_TIME = None
 SUM_LATENCY = 0.0
 SUM_INTERVAL = 0.0
 
+# Python landing logic states
+PYTHON_LANDING = False
+PYTHON_LANDING_START_TIME = None
+
 def exchange(frame_bytes, width, height, pixfmt, telemetry):
-    global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL
+    global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME
     start_time = time.perf_counter()
     
     # 统计调用帧间隔（实际呼叫 FPS）
@@ -32,6 +36,48 @@ def exchange(frame_bytes, width, height, pixfmt, telemetry):
         interval = current_time - LAST_CALL_TIME
         SUM_INTERVAL += interval
     LAST_CALL_TIME = current_time
+
+    # Print BoradCastRecv packets if any are received
+    if telemetry and 'BoradCastRecv' in telemetry:
+        broadcast_packets = telemetry['BoradCastRecv']
+        if broadcast_packets:
+            sys.stdout.write(f"\n[Python] BoradCastRecv Packets: {[p.hex() for p in broadcast_packets]}\n")
+            sys.stdout.flush()
+            for p in broadcast_packets:
+                if len(p) >= 2 and p[0] == 0xCB and p[1] == 0x01:
+                    sys.stdout.write("\n[Python] Received CB 01: Arming flight controller\n")
+                    sys.stdout.flush()
+                    apm.arm()
+                elif len(p) >= 2 and p[0] == 0xCB and p[1] == 0x00:
+                    sys.stdout.write("\n[Python] Received CB 00: Disarming flight controller\n")
+                    sys.stdout.flush()
+                    apm.disarm()
+                elif len(p) >= 2 and p[0] == 0xB1 and p[1] == 0x01:
+                    if not PYTHON_LANDING:
+                        sys.stdout.write("\n[Python] Received B1 01: Replicating Landing Logic (Position to 0,0,0)\n")
+                        sys.stdout.flush()
+                        apm.set_position(0, 0, 0, True)
+                        PYTHON_LANDING = True
+                        PYTHON_LANDING_START_TIME = time.perf_counter()
+
+    # Process Python Landing Telemetry Verification
+    if PYTHON_LANDING:
+        nav_relative_pos = telemetry.get('nav_relative_pos') if telemetry else None
+        if nav_relative_pos and len(nav_relative_pos) >= 3 and nav_relative_pos[2] is not None:
+            current_alt = nav_relative_pos[2]
+            if abs(current_alt) <= 8.0:
+                elapsed_ms = (time.perf_counter() - PYTHON_LANDING_START_TIME) * 1000.0
+                sys.stdout.write(f"\r[Python Landing] Alt: {current_alt:.2f} cm | stable: {elapsed_ms:.1f}ms / 800ms")
+                sys.stdout.flush()
+                if elapsed_ms >= 800.0:
+                    sys.stdout.write("\n[Python Landing] Touchdown stable for 800ms. Disarming...\n")
+                    sys.stdout.flush()
+                    apm.disarm()
+                    PYTHON_LANDING = False
+                    PYTHON_LANDING_START_TIME = None
+            else:
+                # Reset landing start time to current time if altitude is not close to ground
+                PYTHON_LANDING_START_TIME = time.perf_counter()
 
     try:
         FRAME_COUNTER += 1
@@ -95,6 +141,7 @@ def exchange(frame_bytes, width, height, pixfmt, telemetry):
                 sys.stdout.write(f"\r[Vision] {target_str:<25} | FPS: {avg_fps:.1f} | Latency: {avg_latency_ms:.2f}ms | Temp={temp}C, Bat={volt}V")
                 sys.stdout.flush()
                 
+
     except Exception as e:
         import traceback
         sys.stdout.write(f"\n[Python Error] Exception in exchange: {e}\n")

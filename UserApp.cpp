@@ -27,6 +27,15 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 
 extern "C" void UserAppExChange(UserAppData data)
 {
+    std::vector<std::vector<uint8_t>> broadcastPackets;
+    if (data.BoradCastRecv != nullptr)
+    {
+        for (const auto &packet : *data.BoradCastRecv)
+        {
+            broadcastPackets.push_back(packet);
+        }
+    }
+
     // 1. Process and pop incoming broadcast command messages internally
     g_flightController.processCmd(data);
 
@@ -44,7 +53,7 @@ extern "C" void UserAppExChange(UserAppData data)
     }
 
     // 4. Call Python engine loop to run Python OpenCV and handle commands
-    g_pythonEngine.execute(data);
+    g_pythonEngine.execute(data, broadcastPackets);
 
     // 5. Asynchronous NPU Detection
     g_yoloEngine.detectAsync(

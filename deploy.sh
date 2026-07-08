@@ -22,8 +22,8 @@ echo ">>> Step 1: Deploying shared libraries (.so) to target's /lib/..."
 # Collect target .so files
 SO_FILES=(
     "${BUILD_DIR}/libUserApp.so"
-    "${BUILD_DIR}/librga/librga.so"
-    "${THIRDPARTY_DIR}/lib/librknnrt.so"
+    # "${BUILD_DIR}/librga/librga.so"
+    # "${THIRDPARTY_DIR}/lib/librknnrt.so"
 )
 
 for so_file in "${SO_FILES[@]}"; do
@@ -45,8 +45,8 @@ echo "Creating remote directory /etc/rknn..."
 proxychains ssh "${TARGET_DEST}" "mkdir -p /etc/rknn"
 
 MODEL_FILES=(
-    "${THIRDPARTY_DIR}/model/yolov8n.rknn"
-    "${THIRDPARTY_DIR}/model/coco_80_labels_list.txt"
+    # "${THIRDPARTY_DIR}/model/yolov8n.rknn"
+    # "${THIRDPARTY_DIR}/model/coco_80_labels_list.txt"
     "${WORKSPACE_DIR}/user_app.py"
 )
 

@@ -230,7 +230,7 @@ PyObject* PythonEngine::packDoubleArray(double* const* arr, int size)
     return pList;
 }
 
-PyObject* PythonEngine::buildTelemetryDict(const ControllerData &apmData)
+PyObject* PythonEngine::buildTelemetryDict(const ControllerData &apmData, const std::vector<std::vector<uint8_t>> &broadcastPackets)
 {
     PyObject* pTelemetry = PyDict_New();
 
@@ -320,10 +320,24 @@ PyObject* PythonEngine::buildTelemetryDict(const ControllerData &apmData)
     add_array("rc_channel_raw", packIntArray(apmData._RC_Channel_Raw, 16));
     add_array("ef_channel_raw", packIntArray(apmData._EF_Channel_Raw, 16));
 
+    // Broadcast received packets
+    PyObject* pList = PyList_New(broadcastPackets.size());
+    for (size_t i = 0; i < broadcastPackets.size(); ++i) {
+        PyObject* pBytes = nullptr;
+        if (broadcastPackets[i].empty()) {
+            pBytes = PyBytes_FromStringAndSize("", 0);
+        } else {
+            pBytes = PyBytes_FromStringAndSize((const char*)broadcastPackets[i].data(), broadcastPackets[i].size());
+        }
+        PyList_SetItem(pList, i, pBytes);
+    }
+    PyDict_SetItemString(pTelemetry, "BoradCastRecv", pList);
+    Py_DECREF(pList);
+
     return pTelemetry;
 }
 
-bool PythonEngine::execute(const UserAppData &data)
+bool PythonEngine::execute(const UserAppData &data, const std::vector<std::vector<uint8_t>> &broadcastPackets)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_initialized || !g_pythonExchangeFunc || !PyCallable_Check(g_pythonExchangeFunc)) {
@@ -357,7 +371,7 @@ bool PythonEngine::execute(const UserAppData &data)
     PyGILState_STATE gstate = PyGILState_Ensure();
 
     // Pack telemetry and camera frame data
-    PyObject* pTelemetry = buildTelemetryDict(data.APMData);
+    PyObject* pTelemetry = buildTelemetryDict(data.APMData, broadcastPackets);
     PyObject* pFrameBytes = PyBytes_FromStringAndSize((const char*)data.cameraFrame.data, data.cameraFrame.size);
     
     // Pass args (frame_bytes, width, height, pixfmt, telemetry)

@@ -10,6 +10,7 @@ add_library(UserApp SHARED
     UserApp.cpp
     src/image/RgaProcessor.cpp
     src/npu/YoloEngine.cpp
+    src/python/PythonEngine.cpp
 )
 
 target_compile_features(UserApp PRIVATE cxx_std_17)
@@ -20,6 +21,11 @@ target_include_directories(UserApp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/librga/im2d_api
     ${CMAKE_CURRENT_SOURCE_DIR}/librga/include
 )
+
+# Explicitly target the SDK's cross-compilation sysroot Python to avoid host architecture mismatch
+set(Python3_INCLUDE_DIRS "/home/user/build/pokysdk/sysroots/cortexa55-poky-linux/usr/include/python3.13")
+set(Python3_LIBRARIES "/home/user/build/pokysdk/sysroots/cortexa55-poky-linux/usr/lib/libpython3.13.so")
+target_include_directories(UserApp PRIVATE ${Python3_INCLUDE_DIRS})
 
 set(RKNN_MODEL_ZOO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/rknn_model_zoo")
 
@@ -33,7 +39,7 @@ add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/3rdparty" userapp_rknn_3rdparty.out)
 add_subdirectory("${RKNN_MODEL_ZOO_ROOT}/utils" userapp_rknn_utils.out)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/yolo_npu" userapp_yolo_npu.out)
-target_link_libraries(UserApp PRIVATE userapp_yolo_npu rga)
+target_link_libraries(UserApp PRIVATE userapp_yolo_npu rga ${Python3_LIBRARIES})
 
 target_compile_definitions(UserApp PRIVATE
     USERAPP_DEFAULT_YOLO_MODEL="/etc/rknn/yolov8n.rknn"
@@ -51,6 +57,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/lib/librknnrt.so" DESTINAT
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/yolov8n.rknn"
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/coco_80_labels_list.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/user_app.py"
     DESTINATION etc/rknn
 )
 

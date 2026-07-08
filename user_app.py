@@ -15,52 +15,66 @@ def init(width, height, pixfmt):
     # Return 0 or initialization status
     return 0
 
+# 全局帧计数器，用于降频打印以节省 CPU
+FRAME_COUNTER = 0
+
 def exchange(frame_bytes, width, height, pixfmt, telemetry):
+    global FRAME_COUNTER
     try:
+        FRAME_COUNTER += 1
+        
         # 1. Convert raw bytes to a NumPy array (cv2 image format)
         frame = np.frombuffer(frame_bytes, dtype=np.uint8)
         
-        # 2. Reshape frame based on format.
+        # 2. Reshape frame based on format (already converted to BGR24 in C++ using RGA)
         img = None
         if len(frame) == width * height * 3:
             img = frame.reshape((height, width, 3))
-        elif len(frame) == int(width * height * 1.5):
-            # Convert NV12 to BGR
-            img = cv2.cvtColor(frame.reshape((height * 3 // 2, width)), cv2.COLOR_YUV2BGR_NV12)
             
-        # -------------------------------------------------------------
-        # Telemetry Dictionary Usage Example
-        # -------------------------------------------------------------
-        print("\n--- [Python] Telemetry Update ---")
-        if telemetry is None:
-            print("  Telemetry dict is None!")
-            return 0
+            # 1. Gaussian Blur for denoising (5x5 kernel)
+            blurred = cv2.GaussianBlur(img, (5, 5), 0)
             
-        print(f"  CPU Temp:         {telemetry.get('cpu_temp')} C")
-        print(f"  Battery Voltage:  {telemetry.get('battery_voltage')} V")
-        print(f"  SYS ARM Flag:     {telemetry.get('sys_arm_flag')}")
-        print(f"  APM Status:       {telemetry.get('sys_apm_status')}")
-        
-        # Array/List metrics
-        euler = telemetry.get('att_euler_angle')
-        if euler:
-            euler_val = [x if x is not None else 0.0 for x in euler]
-            print(f"  Euler Angle (R/P/Y): Roll={euler_val[0]:.2f}, Pitch={euler_val[1]:.2f}, Yaw={euler_val[2]:.2f}")
+            # 2. Convert to HSV color space
+            hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
             
-        pos = telemetry.get('nav_global_pos')
-        if pos:
-            pos_val = [x if x is not None else 0 for x in pos]
-            print(f"  Global Pos:       Lat={pos_val[0]}, Lon={pos_val[1]}, Alt={pos_val[2]}")
+            # 3. Red color thresholding (Red wraps around Hue 0 and 180)
+            lower_red1 = np.array([0, 100, 100])
+            upper_red1 = np.array([10, 255, 255])
+            lower_red2 = np.array([170, 100, 100])
+            upper_red2 = np.array([180, 255, 255])
             
-        speed = telemetry.get('nav_speed')
-        if speed:
-            speed_val = [x if x is not None else 0.0 for x in speed]
-            print(f"  Speed (X/Y/Z):    Vx={speed_val[0]:.2f}, Vy={speed_val[1]:.2f}, Vz={speed_val[2]:.2f}")
+            mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+            mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+            mask = mask1 | mask2
+            
+            # 4. Find external contours
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            target_x, target_y, target_area = -1, -1, 0.0
+            if contours:
+                largest_contour = max(contours, key=cv2.contourArea)
+                target_area = cv2.contourArea(largest_contour)
+                if target_area > 100:  # Filter out tiny noise
+                    M = cv2.moments(largest_contour)
+                    if M["m00"] != 0:
+                        target_x = int(M["m10"] / M["m00"])
+                        target_y = int(M["m01"] / M["m00"])
+            
+            # Only print detection result once every 30 frames
+            if FRAME_COUNTER % 30 == 0:
+                target_str = f"Found: X={target_x}, Y={target_y}, Area={target_area:.1f}" if target_x != -1 else "No target"
+                
+                temp = telemetry.get('cpu_temp') if telemetry else None
+                volt = telemetry.get('battery_voltage') if telemetry else None
+                arm = telemetry.get('sys_arm_flag') if telemetry else None
+                
+                # Use carriage return (\r) to overwrite the line and prevent scrolling
+                sys.stdout.write(f"\r[Vision] {target_str:<35} | [Telemetry] Temp={temp}C, Bat={volt}V, Armed={arm}")
+                sys.stdout.flush()
+                
     except Exception as e:
         import traceback
-        print(f"[Python Error] Exception in exchange: {e}")
+        sys.stdout.write(f"\n[Python Error] Exception in exchange: {e}\n")
         traceback.print_exc()
-        
-    return 0
         
     return 0

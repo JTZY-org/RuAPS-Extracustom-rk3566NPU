@@ -1,6 +1,8 @@
 #include "PythonEngine.hpp"
 #include <iostream>
 #include <vector>
+#include <pthread.h>
+#include <sched.h>
 
 namespace
 {
@@ -125,6 +127,7 @@ PythonEngine::PythonEngine()
     , g_pythonExchangeFunc(nullptr)
     , m_mainThreadState(nullptr)
     , m_initialized(false)
+    , m_affinitySet(false)
 {
 }
 
@@ -325,6 +328,21 @@ bool PythonEngine::execute(const UserAppData &data)
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_initialized || !g_pythonExchangeFunc || !PyCallable_Check(g_pythonExchangeFunc)) {
         return false;
+    }
+
+    if (!m_affinitySet)
+    {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(2, &cpuset); // Bind to CPU 2
+        pthread_t current_thread = pthread_self();
+        int rc = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+        if (rc == 0) {
+            std::cout << "[PythonEngine] Successfully bound Python execution thread to CPU 2" << std::endl;
+        } else {
+            std::cerr << "[PythonEngine] Failed to bind Python execution thread to CPU 2, error: " << rc << std::endl;
+        }
+        m_affinitySet = true;
     }
 
     // Set callback pointers globally

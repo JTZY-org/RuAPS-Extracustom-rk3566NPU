@@ -39,4 +39,5 @@ private:
     PyThreadState* m_mainThreadState;
     mutable std::mutex m_mutex;
     bool m_initialized;
+    bool m_affinitySet;
 };

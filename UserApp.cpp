@@ -36,6 +36,13 @@ extern "C" void UserAppExChange(UserAppData data)
     // 3. Image Preprocessing (RGA Hardware Rotation, bypassed internally if NPU is busy)
     uint8_t *rotatedFrame = g_rgaProcessor.rotate180(data.cameraFrame, g_yoloEngine.isBusy());
 
+    // Convert rotated NV12 frame to BGR24 using RGA hardware for Python OpenCV
+    if (g_rgaProcessor.convertToBgr24(rotatedFrame))
+    {
+        data.cameraFrame.data = g_rgaProcessor.getBgrBuffer();
+        data.cameraFrame.size = g_rgaProcessor.getBgrBufferSize();
+    }
+
     // 4. Call Python engine loop to run Python OpenCV and handle commands
     g_pythonEngine.execute(data);
 

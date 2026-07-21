@@ -21,7 +21,7 @@ struct ControllerData
     float *_Baro_Temp;
     float *_Baro_PressureHPA;
     float *_Baro_AGLAltitudeCM;
-    float *_RangeFinder_AGLAltCM;
+    double *_RangeFinder_AGLAltCM;
 
     bool *_SYS_ARMFlag;
     int *_SYS_TimeInfo[10];
@@ -39,6 +39,8 @@ struct ControllerData
     int *_NAV_Global_SATCount;
     float *_NAV_Global_Head;
     int *_NAV_GPS_HDOP;
+
+    int *_SEN_FLOW_Quality;
 
     int *_RC_Channel_Raw[16];
     int *_EF_Channel_Raw[16];

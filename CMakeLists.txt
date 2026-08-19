@@ -58,6 +58,7 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/yolov8n.rknn"
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/coco_80_labels_list.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/user_app.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/apm.pyi"
     DESTINATION etc/rknn
 )
 

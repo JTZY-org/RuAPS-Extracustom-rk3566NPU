@@ -4,8 +4,12 @@ import cv2
 import sys
 import apm
 import time
+from typing import TYPE_CHECKING
 
-def init(width, height, pixfmt):
+if TYPE_CHECKING:
+    from apm import TelemetryData
+
+def init(width: int, height: int, pixfmt: int) -> int:
     """
     Called once during UserAppInit
     :param width: Image width
@@ -26,7 +30,7 @@ SUM_INTERVAL = 0.0
 PYTHON_LANDING = False
 PYTHON_LANDING_START_TIME = None
 
-def exchange(frame_bytes, width, height, pixfmt, telemetry):
+def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry: 'TelemetryData') -> int:
     global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME
     start_time = time.perf_counter()
     
@@ -137,9 +141,11 @@ def exchange(frame_bytes, width, height, pixfmt, telemetry):
                 volt = telemetry.get('battery_voltage') if telemetry else None
                 arm = telemetry.get('sys_arm_flag') if telemetry else None
                 
-                # 在单行中合并打印所有数据、处理帧率与耗时
-                sys.stdout.write(f"\r[Vision] {target_str:<25} | FPS: {avg_fps:.1f} | Latency: {avg_latency_ms:.2f}ms | Temp={temp}C, Bat={volt}V")
-                sys.stdout.flush()
+                # 示範讀取 C++ NPU 傳過來的追蹤結果
+                detections = telemetry.get('detections') if telemetry else None
+                if detections:
+                    sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")
+                    sys.stdout.flush()
                 
 
     except Exception as e:

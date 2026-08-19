@@ -3,6 +3,7 @@
 #include <vector>
 #include <pthread.h>
 #include <sched.h>
+#include "src/npu/ProtocolSerializer.hpp"
 
 namespace
 {
@@ -20,8 +21,29 @@ namespace
         if (ptr == nullptr)
             return false;
         uintptr_t val = reinterpret_cast<uintptr_t>(ptr);
+        
+        // 1. Check for standard invalid/sentinel values (-1)
         if (val == static_cast<uintptr_t>(-1) || val == 0xffffffff)
             return false;
+            
+        // 2. Filter out typical uninitialized memory filler patterns
+        if (val == 0xbebebebebebebebeULL || val == 0xbebebebeULL)
+            return false;
+        if (val == 0xccccccccccccccccULL || val == 0xccccccccULL)
+            return false;
+        if (val == 0xcdcdcdcdcdcdcdcdULL || val == 0xcdcdcdcdULL)
+            return false;
+        if (val == 0xddddddddddddddddULL || val == 0xddddddddULL)
+            return false;
+        if (val == 0xdeadbeefdeadbeefULL || val == 0xdeadbeefULL)
+            return false;
+            
+        // 3. User-space virtual address range check on 64-bit Linux.
+        // Valid user-space addresses are less than 0x0001000000000000ULL (48-bit address space).
+        // Addresses below 0x1000 are reserved/invalid.
+        if (val < 0x1000 || val >= 0x0001000000000000ULL)
+            return false;
+            
         return true;
     }
 }
@@ -388,6 +410,38 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
     }
     PyDict_SetItemString(pTelemetry, "BoradCastRecv", pList);
     Py_DECREF(pList);
+
+    // Pack latest NPU detections
+    std::vector<TrackedBox> latestDets = ProtocolSerializer::getLatestDetections();
+    PyObject *pDetsList = PyList_New(latestDets.size());
+    for (size_t i = 0; i < latestDets.size(); ++i)
+    {
+        PyObject *pDetDict = PyDict_New();
+        
+        PyObject *pTrackId = PyLong_FromLong(latestDets[i].track_id);
+        PyObject *pClassId = PyLong_FromLong(latestDets[i].class_id);
+        PyObject *pConf = PyFloat_FromDouble(latestDets[i].confidence);
+        
+        PyObject *pBox = PyList_New(4);
+        PyList_SetItem(pBox, 0, PyLong_FromLong(latestDets[i].x1));
+        PyList_SetItem(pBox, 1, PyLong_FromLong(latestDets[i].y1));
+        PyList_SetItem(pBox, 2, PyLong_FromLong(latestDets[i].x2));
+        PyList_SetItem(pBox, 3, PyLong_FromLong(latestDets[i].y2));
+        
+        PyDict_SetItemString(pDetDict, "track_id", pTrackId);
+        PyDict_SetItemString(pDetDict, "class_id", pClassId);
+        PyDict_SetItemString(pDetDict, "confidence", pConf);
+        PyDict_SetItemString(pDetDict, "box", pBox);
+        
+        Py_DECREF(pTrackId);
+        Py_DECREF(pClassId);
+        Py_DECREF(pConf);
+        Py_DECREF(pBox);
+        
+        PyList_SetItem(pDetsList, i, pDetDict);
+    }
+    PyDict_SetItemString(pTelemetry, "detections", pDetsList);
+    Py_DECREF(pDetsList);
 
     return pTelemetry;
 }

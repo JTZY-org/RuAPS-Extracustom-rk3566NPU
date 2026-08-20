@@ -90,7 +90,6 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_rgaProcessor.initialize(vinfo.ImgWidth, vinfo.ImgHeight, vinfo.PixFormat);
     g_yoloEngine.initialize();
     g_pythonEngine.initialize(vinfo);
-    g_servoController.start();
 }
 
 extern "C" void UserAppExChange(UserAppData data)

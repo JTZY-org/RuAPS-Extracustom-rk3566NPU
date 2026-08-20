@@ -1,31 +1,15 @@
 #include "ServoController.hpp"
+#include <chrono>
 
-ServoController::ServoController() 
-    : m_running(false)
-    , m_ch10_pwm(1500)
-    , m_servoFunc(nullptr)
-    , m_hasData(false) 
+ServoController::ServoController()
+    : m_running(true), m_pwm_ptr(nullptr), m_servoFunc(nullptr)
 {
+    m_thread = std::thread(&ServoController::run, this);
 }
 
 ServoController::~ServoController()
 {
-    stop();
-}
-
-void ServoController::start()
-{
-    if (m_running) return;
-    m_running = true;
-    m_lastFrameTime = std::chrono::steady_clock::now();
-    m_thread = std::thread(&ServoController::run, this);
-}
-
-void ServoController::stop()
-{
-    if (!m_running) return;
     m_running = false;
-    m_cv.notify_all();
     if (m_thread.joinable())
     {
         m_thread.join();
@@ -34,45 +18,52 @@ void ServoController::stop()
 
 void ServoController::updateData(const UserAppData &data)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
     m_servoFunc = data.APMData.APMControllerServo;
-    if (data.APMData._RC_Channel_Raw[9] != nullptr)
-    {
-        m_ch10_pwm = *data.APMData._RC_Channel_Raw[9];
-        m_hasData = true;
-    }
-    m_lastFrameTime = std::chrono::steady_clock::now();
+    m_pwm_ptr = data.APMData._RC_Channel_Raw[9];
 }
 
 void ServoController::run()
 {
+    double filtered_val = 1500.0;
+    bool first_run = true;
+    auto lastTime = std::chrono::steady_clock::now();
+    int lastSentPwm = -1;
+
     while (m_running)
     {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_cv.wait_for(lock, std::chrono::milliseconds(20), [this]() { return !m_running; });
-        
-        if (!m_running)
-        {
-            break;
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(33)); // 30Hz
         
         auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastFrameTime).count();
-        if (elapsed > 200)
+        double dt = std::chrono::duration<double>(now - lastTime).count();
+        lastTime = now;
+
+        void (*func)(int, int) = m_servoFunc;
+        int* pwm_ptr = m_pwm_ptr;
+        if (func && pwm_ptr && m_running)
         {
-            continue;
-        }
-        
-        void (*servoFunc)(int, int) = m_servoFunc;
-        int pwm = m_ch10_pwm;
-        bool hasData = m_hasData;
-        lock.unlock();
-        
-        if (hasData && servoFunc != nullptr)
-        {
-            if (pwm >= 800 && pwm <= 2200)
+            int raw_val = *pwm_ptr;
+            if (raw_val >= 800 && raw_val <= 2200)
             {
-                servoFunc(4, pwm);
+                if (first_run)
+                {
+                    filtered_val = raw_val;
+                    first_run = false;
+                }
+                else
+                {
+                    // LPF formula: y(t) = y(t-1) + alpha * (x(t) - y(t-1))
+                    // Cutoff frequency fc = 1.0 Hz -> tau = 1 / (2 * pi * fc)
+                    double tau = 1.0 / (2.0 * 3.141592653589793 * 1.0);
+                    double alpha = dt / (tau + dt);
+                    filtered_val = filtered_val + alpha * (raw_val - filtered_val);
+                }
+                
+                int rounded_pwm = static_cast<int>(filtered_val + 0.5);
+                if (rounded_pwm != lastSentPwm)
+                {
+                    func(4, rounded_pwm);
+                    lastSentPwm = rounded_pwm;
+                }
             }
         }
     }

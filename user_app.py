@@ -142,10 +142,10 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                 arm = telemetry.get('sys_arm_flag') if telemetry else None
                 
                 # 示範讀取 C++ NPU 傳過來的追蹤結果
-                detections = telemetry.get('detections') if telemetry else None
-                if detections:
-                    sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")
-                    sys.stdout.flush()
+                # detections = telemetry.get('detections') if telemetry else None
+                # if detections:
+                #     sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")
+                #     sys.stdout.flush()
                 
 
     except Exception as e:

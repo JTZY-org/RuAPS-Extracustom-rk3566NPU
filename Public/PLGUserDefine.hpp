@@ -51,7 +51,7 @@ struct ControllerData
     int *_RC_Channel_Raw[16];
     int *_EF_Channel_Raw[16];
 
-    uint64_t *_GYRO_CYCLE_TIME;
+    float *_GYRO_CYCLE_TIME;
     float *_Battery_Voltage;
     float *_Battery_Voltage_Single;
 

@@ -389,7 +389,7 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
     add_float("nav_global_head", apmData._NAV_Global_Head);
     add_int("nav_global_sat_count", apmData._NAV_Global_SATCount);
     add_int("nav_gps_hdop", apmData._NAV_GPS_HDOP);
-    add_uint64("gyro_cycle_time", apmData._GYRO_CYCLE_TIME);
+    add_float("gyro_cycle_time", apmData._GYRO_CYCLE_TIME);
     add_float("battery_voltage", apmData._Battery_Voltage);
     add_float("battery_voltage_single", apmData._Battery_Voltage_Single);
     add_double("cpu_temp", apmData._CPU_Core_Temp);

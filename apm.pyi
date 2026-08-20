@@ -16,7 +16,7 @@ class TelemetryData(TypedDict, total=False):
     nav_global_head: Optional[float]
     nav_global_sat_count: Optional[int]
     nav_gps_hdop: Optional[int]
-    gyro_cycle_time: Optional[int]
+    gyro_cycle_time: Optional[float]
     battery_voltage: Optional[float]
     battery_voltage_single: Optional[float]
     cpu_temp: Optional[float]

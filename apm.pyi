@@ -49,6 +49,10 @@ def set_position(x: int, y: int, z: int, reset_home: bool = True) -> None:
     """Set flight controller target position."""
     ...
 
+def set_gps_position(lat: int, lng: int, alt: int) -> None:
+    """Set flight controller target GPS position."""
+    ...
+
 def set_speed(x: int, y: int, z: int) -> None:
     """Set flight controller speed."""
     ...

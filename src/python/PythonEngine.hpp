@@ -20,6 +20,7 @@ public:
     static PyObject* apm_ARM(PyObject* self, PyObject* args);
     static PyObject* apm_DISARM(PyObject* self, PyObject* args);
     static PyObject* apm_Position(PyObject* self, PyObject* args);
+    static PyObject* apm_GPSPosition(PyObject* self, PyObject* args);
     static PyObject* apm_Speed(PyObject* self, PyObject* args);
     static PyObject* apm_Servo(PyObject* self, PyObject* args);
     static PyObject* apm_PushBroadcast(PyObject* self, PyObject* args);

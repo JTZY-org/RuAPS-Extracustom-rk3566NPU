@@ -59,6 +59,7 @@ struct ControllerData
 
     void (*APMControllerARM)(void);
     void (*APMControllerDISARM)(void);
+    void (*APMControllerGPSPosition)(int lat, int lng, int alt);
     void (*APMControllerPosition)(int x, int y, int z, bool resetHome);
     void (*APMControllerSpeed)(int x, int y, int z);
     void (*APMControllerServo)(int pin, int PWMInUs);

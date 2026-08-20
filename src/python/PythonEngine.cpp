@@ -11,6 +11,7 @@ namespace
     void (*g_apmControllerARM)(void) = nullptr;
     void (*g_apmControllerDISARM)(void) = nullptr;
     void (*g_apmControllerPosition)(int, int, int, bool) = nullptr;
+    void (*g_apmControllerGPSPosition)(int, int, int) = nullptr;
     void (*g_apmControllerSpeed)(int, int, int) = nullptr;
     void (*g_apmControllerServo)(int, int) = nullptr;
     void (*g_pushBroadcastData)(std::vector<uint8_t>) = nullptr;
@@ -89,6 +90,22 @@ PyObject *PythonEngine::apm_Position(PyObject *self, PyObject *args)
     return nullptr;
 }
 
+PyObject *PythonEngine::apm_GPSPosition(PyObject *self, PyObject *args)
+{
+    int lat, lng, alt;
+    if (!PyArg_ParseTuple(args, "iii", &lat, &lng, &alt))
+    {
+        return nullptr;
+    }
+    if (g_apmControllerGPSPosition)
+    {
+        g_apmControllerGPSPosition(lat, lng, alt);
+        Py_RETURN_NONE;
+    }
+    PyErr_SetString(PyExc_RuntimeError, "APMControllerGPSPosition pointer is null");
+    return nullptr;
+}
+
 PyObject *PythonEngine::apm_Speed(PyObject *self, PyObject *args)
 {
     int x, y, z;
@@ -144,6 +161,7 @@ static PyMethodDef APMMethods[] = {
     {"arm", PythonEngine::apm_ARM, METH_NOARGS, "Arm the flight controller"},
     {"disarm", PythonEngine::apm_DISARM, METH_NOARGS, "Disarm the flight controller"},
     {"set_position", PythonEngine::apm_Position, METH_VARARGS, "Set flight controller target position (x, y, z, resetHome)"},
+    {"set_gps_position", PythonEngine::apm_GPSPosition, METH_VARARGS, "Set flight controller target GPS position (lat, lng, alt)"},
     {"set_speed", PythonEngine::apm_Speed, METH_VARARGS, "Set flight controller speed (x, y, z)"},
     {"set_servo", PythonEngine::apm_Servo, METH_VARARGS, "Set servo output (pin, pwm)"},
     {"push_broadcast", PythonEngine::apm_PushBroadcast, METH_VARARGS, "Push broadcast data"},
@@ -476,6 +494,7 @@ bool PythonEngine::execute(const UserAppData &data, const std::vector<std::vecto
     g_apmControllerARM = data.APMData.APMControllerARM;
     g_apmControllerDISARM = data.APMData.APMControllerDISARM;
     g_apmControllerPosition = data.APMData.APMControllerPosition;
+    g_apmControllerGPSPosition = data.APMData.APMControllerGPSPosition;
     g_apmControllerSpeed = data.APMData.APMControllerSpeed;
     g_apmControllerServo = data.APMData.APMControllerServo;
     g_pushBroadcastData = data.pushBroadcastData;

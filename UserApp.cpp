@@ -3,6 +3,8 @@
 #include <vector>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <unistd.h>
 #include "src/config.hpp"
 #include "src/image/RgaProcessor.hpp"
 #include "src/npu/YoloEngine.hpp"
@@ -16,6 +18,68 @@ namespace
     YoloEngine g_yoloEngine;
     FlightController g_flightController;
     PythonEngine g_pythonEngine;
+
+    int getFlipAngle()
+    {
+        static int cachedAngle = -1; // Initialize to -1 to trigger initial print
+        static int frameCounter = 0;
+
+        if (frameCounter++ % 30 == 0)
+        {
+            int newAngle = 180; // default fallback
+            if (access("/etc/rknn/flip90", F_OK) == 0)
+            {
+                newAngle = 90;
+            }
+            else if (access("/etc/rknn/flip180", F_OK) == 0)
+            {
+                newAngle = 180;
+            }
+            else if (access("/etc/rknn/flip270", F_OK) == 0)
+            {
+                newAngle = 270;
+            }
+            else if (access("/etc/rknn/flip0", F_OK) == 0)
+            {
+                newAngle = 0;
+            }
+            else
+            {
+                bool found = false;
+                for (const std::string &path : {"/etc/rknn/flipxxx", "/etc/rknn/flip"})
+                {
+                    if (access(path.c_str(), F_OK) == 0)
+                    {
+                        std::ifstream ifs(path);
+                        if (ifs.is_open())
+                        {
+                            int val = -1;
+                            if (ifs >> val)
+                            {
+                                if (val == 90 || val == 180 || val == 270 || val == 0)
+                                {
+                                    newAngle = val;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!found)
+                {
+                    newAngle = 180; // default fallback
+                }
+            }
+
+            if (newAngle != cachedAngle)
+            {
+                std::cout << "[UserApp] Flip configuration detected/updated: " << newAngle << " degrees" << std::endl;
+                cachedAngle = newAngle;
+            }
+        }
+        return cachedAngle;
+    }
 }
 
 extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
@@ -44,14 +108,21 @@ extern "C" void UserAppExChange(UserAppData data)
     // 2. Telemetry and Landing state machine checks
     g_flightController.updateState(data);
 
-    // 3. Image Preprocessing (RGA Hardware Rotation, bypassed internally if NPU is busy)
-    uint8_t *rotatedFrame = g_rgaProcessor.rotate180(data.cameraFrame, g_yoloEngine.isBusy());
+    // 3. Image Preprocessing (RGA Hardware Rotation)
+    int currentAngle = getFlipAngle();
+    uint8_t *rotatedFrame = g_rgaProcessor.rotateFrame(data.cameraFrame, currentAngle);
+
+    bool isActuallyRotated = (rotatedFrame == g_rgaProcessor.getFrameBuffer() && currentAngle != 0);
+    int finalWidth = (isActuallyRotated && (currentAngle == 90 || currentAngle == 270)) ? g_rgaProcessor.getHeight() : g_rgaProcessor.getWidth();
+    int finalHeight = (isActuallyRotated && (currentAngle == 90 || currentAngle == 270)) ? g_rgaProcessor.getWidth() : g_rgaProcessor.getHeight();
 
     // Convert rotated NV12 frame to BGR24 using RGA hardware for Python OpenCV
     if (g_rgaProcessor.convertToBgr24(rotatedFrame))
     {
         data.cameraFrame.data = g_rgaProcessor.getBgrBuffer();
         data.cameraFrame.size = g_rgaProcessor.getBgrBufferSize();
+        data.cameraFrame.width = finalWidth;
+        data.cameraFrame.height = finalHeight;
     }
 
     // 4. Call Python engine loop to run Python OpenCV and handle commands
@@ -59,7 +130,7 @@ extern "C" void UserAppExChange(UserAppData data)
 
     // 5. Asynchronous NPU Detection
     g_yoloEngine.detectAsync(
-        rotatedFrame, g_rgaProcessor.getWidth(), g_rgaProcessor.getHeight(),
+        rotatedFrame, finalWidth, finalHeight,
         [pushCallback = data.pushBroadcastData](const yolo_image_info_t &info)
         {
             // 6. Broadcast YOLO Target Detections

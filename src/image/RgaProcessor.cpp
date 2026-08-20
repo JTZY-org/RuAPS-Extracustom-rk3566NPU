@@ -5,9 +5,7 @@
 #include <iostream>
 
 RgaProcessor::RgaProcessor()
-    : m_width(0), m_height(0), m_pixFormat(0)
-    , m_frameBufferSize(0), m_frameBuffer(nullptr), m_dstRgaHandle(0)
-    , m_bgrBufferSize(0), m_bgrBuffer(nullptr), m_bgrRgaHandle(0)
+    : m_width(0), m_height(0), m_pixFormat(0), m_frameBufferSize(0), m_frameBuffer(nullptr), m_dstRgaHandle(0), m_bgrBufferSize(0), m_bgrBuffer(nullptr), m_bgrRgaHandle(0), m_lastRotationAngle(180)
 {
 }
 
@@ -23,7 +21,7 @@ bool RgaProcessor::initialize(int width, int height, unsigned int pixFormat)
     m_width = width;
     m_height = height;
     m_pixFormat = pixFormat;
-    
+
     m_frameBufferSize = static_cast<size_t>(m_width) * static_cast<size_t>(m_height) * 3 / 2;
     m_bgrBufferSize = static_cast<size_t>(m_width) * static_cast<size_t>(m_height) * 3;
 
@@ -86,10 +84,17 @@ void RgaProcessor::cleanup()
     m_frameBufferSize = 0;
 }
 
-uint8_t *RgaProcessor::rotate180(const V4L2Tools::V4l2Data &srcFrame, bool isNpuBusy)
+uint8_t *RgaProcessor::rotate180(const V4L2Tools::V4l2Data &srcFrame)
 {
-    // Skip RGA operations completely if RGA rotation is disabled, NPU is busy, or data is invalid
-    if (!config::ENABLE_RGA_ROTATION || isNpuBusy || srcFrame.data == nullptr || srcFrame.size < m_frameBufferSize || m_frameBuffer == nullptr)
+    return rotateFrame(srcFrame, 180);
+}
+
+uint8_t *RgaProcessor::rotateFrame(const V4L2Tools::V4l2Data &srcFrame, int angle)
+{
+    m_lastRotationAngle = angle;
+
+    // Skip RGA operations completely if RGA rotation is disabled, data is invalid, or angle is 0
+    if (!config::ENABLE_RGA_ROTATION || srcFrame.data == nullptr || srcFrame.size < m_frameBufferSize || m_frameBuffer == nullptr || angle == 0)
     {
         return const_cast<uint8_t *>(srcFrame.data);
     }
@@ -107,10 +112,28 @@ uint8_t *RgaProcessor::rotate180(const V4L2Tools::V4l2Data &srcFrame, bool isNpu
         return m_frameBuffer;
     }
 
-    rga_buffer_t src_img = wrapbuffer_handle(src_handle, m_width, m_height, RK_FORMAT_YCbCr_420_SP);
-    rga_buffer_t dst_img = wrapbuffer_handle(m_dstRgaHandle, m_width, m_height, RK_FORMAT_YCbCr_420_SP);
+    // Determine target dimensions and rotation flag
+    int dst_w = m_width;
+    int dst_h = m_height;
+    int rotation_flag = IM_HAL_TRANSFORM_ROT_180;
 
-    IM_STATUS ret = imrotate(src_img, dst_img, IM_HAL_TRANSFORM_ROT_180);
+    if (angle == 90)
+    {
+        dst_w = m_height;
+        dst_h = m_width;
+        rotation_flag = IM_HAL_TRANSFORM_ROT_90;
+    }
+    else if (angle == 270)
+    {
+        dst_w = m_height;
+        dst_h = m_width;
+        rotation_flag = IM_HAL_TRANSFORM_ROT_270;
+    }
+
+    rga_buffer_t src_img = wrapbuffer_handle(src_handle, m_width, m_height, RK_FORMAT_YCbCr_420_SP);
+    rga_buffer_t dst_img = wrapbuffer_handle(m_dstRgaHandle, dst_w, dst_h, RK_FORMAT_YCbCr_420_SP);
+
+    IM_STATUS ret = imrotate(src_img, dst_img, rotation_flag);
     releasebuffer_handle(src_handle);
 
     if (ret != IM_STATUS_SUCCESS)
@@ -143,8 +166,16 @@ bool RgaProcessor::convertToBgr24(const uint8_t *srcNv12Data)
         return false;
     }
 
-    rga_buffer_t src_img = wrapbuffer_handle(src_handle, m_width, m_height, RK_FORMAT_YCbCr_420_SP);
-    rga_buffer_t dst_img = wrapbuffer_handle(m_bgrRgaHandle, m_width, m_height, RK_FORMAT_BGR_888);
+    int w = m_width;
+    int h = m_height;
+    if (srcNv12Data == m_frameBuffer && (m_lastRotationAngle == 90 || m_lastRotationAngle == 270))
+    {
+        w = m_height;
+        h = m_width;
+    }
+
+    rga_buffer_t src_img = wrapbuffer_handle(src_handle, w, h, RK_FORMAT_YCbCr_420_SP);
+    rga_buffer_t dst_img = wrapbuffer_handle(m_bgrRgaHandle, w, h, RK_FORMAT_BGR_888);
 
     IM_STATUS ret = imcopy(src_img, dst_img);
 

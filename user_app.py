@@ -94,8 +94,11 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         if len(frame) == width * height * 3:
             img = frame.reshape((height, width, 3))
             
+            # Downscale image by 4x (16x pixel reduction) to speed up Python CPU processing
+            img_small = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
+            
             # 1. Gaussian Blur for denoising (5x5 kernel)
-            blurred = cv2.GaussianBlur(img, (5, 5), 0)
+            blurred = cv2.GaussianBlur(img_small, (5, 5), 0)
             
             # 2. Convert to HSV color space
             hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -117,11 +120,13 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
                 target_area = cv2.contourArea(largest_contour)
-                if target_area > 100:  # Filter out tiny noise
+                # Original area threshold was 100 for full-res, scaled threshold is 100 * (0.25^2) = 6.25
+                if target_area > 6.25:  
                     M = cv2.moments(largest_contour)
                     if M["m00"] != 0:
-                        target_x = int(M["m10"] / M["m00"])
-                        target_y = int(M["m01"] / M["m00"])
+                        target_x = int((M["m10"] / M["m00"]) * 4.0)
+                        target_y = int((M["m01"] / M["m00"]) * 4.0)
+                        target_area = target_area * 16.0
             
             # 计算 Python 执行耗时并累加
             latency = time.perf_counter() - start_time

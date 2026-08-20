@@ -11,6 +11,7 @@ add_library(UserApp SHARED
     src/image/RgaProcessor.cpp
     src/npu/YoloEngine.cpp
     src/python/PythonEngine.cpp
+    src/servo/ServoController.cpp
 )
 
 target_compile_features(UserApp PRIVATE cxx_std_17)

@@ -5,12 +5,14 @@
 #include <iomanip>
 #include <fstream>
 #include <unistd.h>
+#include <chrono>
 #include "src/config.hpp"
 #include "src/image/RgaProcessor.hpp"
 #include "src/npu/YoloEngine.hpp"
 #include "src/flight/FlightController.hpp"
 #include "src/npu/ProtocolSerializer.hpp"
 #include "src/python/PythonEngine.hpp"
+#include "src/servo/ServoController.hpp"
 
 namespace
 {
@@ -18,6 +20,7 @@ namespace
     YoloEngine g_yoloEngine;
     FlightController g_flightController;
     PythonEngine g_pythonEngine;
+    ServoController g_servoController;
 
     int getFlipAngle()
     {
@@ -87,10 +90,13 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
     g_rgaProcessor.initialize(vinfo.ImgWidth, vinfo.ImgHeight, vinfo.PixFormat);
     g_yoloEngine.initialize();
     g_pythonEngine.initialize(vinfo);
+    g_servoController.start();
 }
 
 extern "C" void UserAppExChange(UserAppData data)
 {
+    g_servoController.updateData(data);
+
     std::vector<std::vector<uint8_t>> broadcastPackets;
     std::deque<std::vector<uint8_t>> recvQueue;
     if (data.getBroadcastRecv != nullptr)

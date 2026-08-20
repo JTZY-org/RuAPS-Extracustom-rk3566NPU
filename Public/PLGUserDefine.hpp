@@ -1,7 +1,13 @@
 #pragma once
 #include <functional>
 #include <vector>
+#include <deque>
 #include "V4L2ToolKit.hpp"
+
+#include <vector>
+#include <mutex>
+#include <stdexcept>
+#include <optional>
 
 struct ControllerData
 {
@@ -62,6 +68,6 @@ struct UserAppData
 {
     ControllerData APMData;
     V4L2Tools::V4l2Data cameraFrame;
-    std::deque<std::vector<uint8_t>> *BoradCastRecv;
-    void (*pushBoradcastData)(std::vector<uint8_t>);
+    void (*pushBroadcastData)(std::vector<uint8_t>);
+    std::deque<std::vector<uint8_t>> (*getBroadcastRecv)();
 };

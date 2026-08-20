@@ -28,16 +28,18 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 extern "C" void UserAppExChange(UserAppData data)
 {
     std::vector<std::vector<uint8_t>> broadcastPackets;
-    if (data.BoradCastRecv != nullptr)
+    std::deque<std::vector<uint8_t>> recvQueue;
+    if (data.getBroadcastRecv != nullptr)
     {
-        for (const auto &packet : *data.BoradCastRecv)
+        recvQueue = data.getBroadcastRecv();
+        for (const auto &packet : recvQueue)
         {
             broadcastPackets.push_back(packet);
         }
     }
 
     // 1. Process and pop incoming broadcast command messages internally
-    g_flightController.processCmd(data);
+    g_flightController.processCmd(recvQueue, data);
 
     // 2. Telemetry and Landing state machine checks
     g_flightController.updateState(data);
@@ -58,7 +60,7 @@ extern "C" void UserAppExChange(UserAppData data)
     // 5. Asynchronous NPU Detection
     g_yoloEngine.detectAsync(
         rotatedFrame, g_rgaProcessor.getWidth(), g_rgaProcessor.getHeight(),
-        [pushCallback = data.pushBoradcastData](const yolo_image_info_t &info)
+        [pushCallback = data.pushBroadcastData](const yolo_image_info_t &info)
         {
             // 6. Broadcast YOLO Target Detections
             ProtocolSerializer::broadcast(info, pushCallback, g_yoloEngine);

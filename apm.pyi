@@ -35,7 +35,7 @@ class TelemetryData(TypedDict, total=False):
     nav_relative_pos: List[Optional[float]]
     rc_channel_raw: List[Optional[int]]
     ef_channel_raw: List[Optional[int]]
-    BoradCastRecv: List[bytes]
+    BroadcastRecv: List[bytes]
 
 def arm() -> None:
     """Arm the flight controller."""

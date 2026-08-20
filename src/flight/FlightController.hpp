@@ -99,17 +99,12 @@ public:
     }
 
     // Business Logic 2: Receives and processes broadcast packets (Command Notification Separated)
-    void processCmd(UserAppData &data)
+    void processCmd(std::deque<std::vector<uint8_t>> &recvQueue, UserAppData &data)
     {
-        if (data.BoradCastRecv == nullptr)
+        while (!recvQueue.empty())
         {
-            return;
-        }
-
-        while (!data.BoradCastRecv->empty())
-        {
-            auto packet = std::move(data.BoradCastRecv->front());
-            data.BoradCastRecv->pop_front();
+            auto packet = std::move(recvQueue.front());
+            recvQueue.pop_front();
 
             // Print hex representation
             LOG_EXCH << "[FlightController] Recv Broadcast (HEX):";

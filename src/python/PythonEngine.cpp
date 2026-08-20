@@ -136,7 +136,7 @@ PyObject *PythonEngine::apm_PushBroadcast(PyObject *self, PyObject *args)
         Py_RETURN_NONE;
     }
     PyBuffer_Release(&view);
-    PyErr_SetString(PyExc_RuntimeError, "pushBoradcastData pointer is null");
+    PyErr_SetString(PyExc_RuntimeError, "pushBroadcastData pointer is null");
     return nullptr;
 }
 
@@ -408,7 +408,7 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
         }
         PyList_SetItem(pList, i, pBytes);
     }
-    PyDict_SetItemString(pTelemetry, "BoradCastRecv", pList);
+    PyDict_SetItemString(pTelemetry, "BroadcastRecv", pList);
     Py_DECREF(pList);
 
     // Pack latest NPU detections
@@ -478,7 +478,7 @@ bool PythonEngine::execute(const UserAppData &data, const std::vector<std::vecto
     g_apmControllerPosition = data.APMData.APMControllerPosition;
     g_apmControllerSpeed = data.APMData.APMControllerSpeed;
     g_apmControllerServo = data.APMData.APMControllerServo;
-    g_pushBroadcastData = data.pushBoradcastData;
+    g_pushBroadcastData = data.pushBroadcastData;
 
     // Ensure we hold the GIL when calling Python C APIs
     PyGILState_STATE gstate = PyGILState_Ensure();

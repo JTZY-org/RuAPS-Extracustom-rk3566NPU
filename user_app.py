@@ -41,11 +41,11 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         SUM_INTERVAL += interval
     LAST_CALL_TIME = current_time
 
-    # Print BoradCastRecv packets if any are received
-    if telemetry and 'BoradCastRecv' in telemetry:
-        broadcast_packets = telemetry['BoradCastRecv']
+    # Print BroadcastRecv packets if any are received
+    if telemetry and 'BroadcastRecv' in telemetry:
+        broadcast_packets = telemetry['BroadcastRecv']
         if broadcast_packets:
-            sys.stdout.write(f"\n[Python] BoradCastRecv Packets: {[p.hex() for p in broadcast_packets]}\n")
+            sys.stdout.write(f"\n[Python] BroadcastRecv Packets: {[p.hex() for p in broadcast_packets]}\n")
             sys.stdout.flush()
             for p in broadcast_packets:
                 if len(p) >= 2 and p[0] == 0xCB and p[1] == 0x01:

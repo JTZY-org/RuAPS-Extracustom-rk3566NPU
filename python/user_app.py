@@ -119,8 +119,8 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME, INITIAL_STATUS_CHECKED
     start_time = time.perf_counter()
     
-    if telemetry and FRAME_COUNTER % 5 == 0:
-        debug_print_telemetry(telemetry)
+    # if telemetry and FRAME_COUNTER % 5 == 0:
+    #     debug_print_telemetry(telemetry)
         
     if telemetry and not INITIAL_STATUS_CHECKED:
         armed = telemetry.get('sys_arm_flag')

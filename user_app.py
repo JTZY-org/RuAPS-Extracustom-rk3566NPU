@@ -30,9 +30,73 @@ SUM_INTERVAL = 0.0
 PYTHON_LANDING = False
 PYTHON_LANDING_START_TIME = None
 
+def debug_print_telemetry(telemetry: 'TelemetryData'):
+    if not telemetry:
+        return
+    
+    items = []
+    
+    # 1. Scalars
+    scalars = [
+        "sys_arm_flag", "sys_pre_arm_flag", "sys_failsafe_flag", "sys_apm_status",
+        "cpu_temp", "battery_voltage", "battery_voltage_single", "gyro_cycle_time",
+        "baro_temp", "baro_pressure_hpa", "baro_agl_altitude_cm", "rangefinder_agl_alt_cm",
+        "accel_clipped_times", "accel_gforce", "att_euler_angle_yaw_v",
+        "nav_relative_head", "nav_global_head", "nav_global_sat_count", "nav_gps_hdop"
+    ]
+    for s in scalars:
+        val = telemetry.get(s)
+        val_str = f"{val:.2f}" if isinstance(val, float) else str(val)
+        items.append(f"{s}:{val_str}")
+        
+    # 2. Arrays
+    arrays = {
+        "accel_acc": "accel_acceleration",
+        "accel_vibe": "accel_vibe",
+        "accel_raw_g": "accel_raw_g",
+        "att_quat": "att_quaternion",
+        "att_euler": "att_euler_angle",
+        "gyro_rate": "gyro_angle_rate",
+        "mag_raw": "mag_raw_l",
+        "nav_speed": "nav_speed",
+        "nav_g_speed": "nav_global_speed",
+        "nav_g_pos": "nav_global_pos",
+        "nav_g_home": "nav_global_home",
+        "nav_rel_pos": "nav_relative_pos"
+    }
+    for prefix, key in arrays.items():
+        arr = telemetry.get(key)
+        if isinstance(arr, list):
+            for idx, val in enumerate(arr):
+                val_str = f"{val:.2f}" if isinstance(val, float) else str(val)
+                items.append(f"{prefix}[{idx}]:{val_str}")
+                
+    # 3. RC / EF channels
+    for chan_type in ["rc_channel_raw", "ef_channel_raw"]:
+        arr = telemetry.get(chan_type)
+        prefix = "rc" if chan_type == "rc_channel_raw" else "ef"
+        if isinstance(arr, list):
+            for idx, val in enumerate(arr):
+                if val is not None:
+                    items.append(f"{prefix}[{idx}]:{val}")
+
+    # Format output: 4 items per line, fixed-width columns
+    lines = ["\033[H\033[2J", "=== TELEMETRY MONITOR (4 ITEMS/LINE) ==="]
+    for i in range(0, len(items), 4):
+        chunk = items[i:i+4]
+        line_str = " | ".join(f"{item:<22}" for item in chunk)
+        lines.append(line_str)
+    lines.append("=========================================")
+    
+    sys.stdout.write("\n".join(lines) + "\n")
+    sys.stdout.flush()
+
 def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry: 'TelemetryData') -> int:
     global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME
     start_time = time.perf_counter()
+    
+    # if telemetry and FRAME_COUNTER % 5 == 0:
+        # debug_print_telemetry(telemetry)
     
     # 统计调用帧间隔（实际呼叫 FPS）
     current_time = start_time
@@ -60,7 +124,10 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                     if not PYTHON_LANDING:
                         sys.stdout.write("\n[Python] Received B1 01: Replicating Landing Logic (Position to 0,0,0)\n")
                         sys.stdout.flush()
-                        apm.set_position(0, 0, 0, True)
+                        realyaw = telemetry.get('att_euler_angle_yaw_v')
+                        if realyaw is None:
+                            realyaw = 0.0
+                        apm.set_position(0, 0, 0, realyaw, True)
                         PYTHON_LANDING = True
                         PYTHON_LANDING_START_TIME = time.perf_counter()
 

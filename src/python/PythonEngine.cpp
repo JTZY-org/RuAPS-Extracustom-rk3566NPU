@@ -10,9 +10,9 @@ namespace
     // Global function pointer references to be called by CPython bindings
     void (*g_apmControllerARM)(void) = nullptr;
     void (*g_apmControllerDISARM)(void) = nullptr;
-    void (*g_apmControllerPosition)(int, int, int, bool) = nullptr;
-    void (*g_apmControllerGPSPosition)(int, int, int) = nullptr;
-    void (*g_apmControllerSpeed)(int, int, int) = nullptr;
+    void (*g_apmControllerPosition)(int, int, int, float, bool) = nullptr;
+    void (*g_apmControllerGPSPosition)(int, int, float, int) = nullptr;
+    void (*g_apmControllerSpeed)(int, int, int, float) = nullptr;
     void (*g_apmControllerServo)(int, int) = nullptr;
     void (*g_pushBroadcastData)(std::vector<uint8_t>) = nullptr;
 
@@ -75,15 +75,16 @@ PyObject *PythonEngine::apm_DISARM(PyObject *self, PyObject *args)
 PyObject *PythonEngine::apm_Position(PyObject *self, PyObject *args)
 {
     int x, y, z;
+    float yaw;
     PyObject *resetHomeObj;
-    if (!PyArg_ParseTuple(args, "iiiO", &x, &y, &z, &resetHomeObj))
+    if (!PyArg_ParseTuple(args, "iiifO", &x, &y, &z, &yaw, &resetHomeObj))
     {
         return nullptr;
     }
     bool resetHome = PyObject_IsTrue(resetHomeObj);
     if (g_apmControllerPosition)
     {
-        g_apmControllerPosition(x, y, z, resetHome);
+        g_apmControllerPosition(x, y, z, yaw, resetHome);
         Py_RETURN_NONE;
     }
     PyErr_SetString(PyExc_RuntimeError, "APMControllerPosition pointer is null");
@@ -93,13 +94,14 @@ PyObject *PythonEngine::apm_Position(PyObject *self, PyObject *args)
 PyObject *PythonEngine::apm_GPSPosition(PyObject *self, PyObject *args)
 {
     int lat, lng, alt;
-    if (!PyArg_ParseTuple(args, "iii", &lat, &lng, &alt))
+    float yaw;
+    if (!PyArg_ParseTuple(args, "iifi", &lat, &lng, &yaw, &alt))
     {
         return nullptr;
     }
     if (g_apmControllerGPSPosition)
     {
-        g_apmControllerGPSPosition(lat, lng, alt);
+        g_apmControllerGPSPosition(lat, lng, yaw, alt);
         Py_RETURN_NONE;
     }
     PyErr_SetString(PyExc_RuntimeError, "APMControllerGPSPosition pointer is null");
@@ -109,13 +111,14 @@ PyObject *PythonEngine::apm_GPSPosition(PyObject *self, PyObject *args)
 PyObject *PythonEngine::apm_Speed(PyObject *self, PyObject *args)
 {
     int x, y, z;
-    if (!PyArg_ParseTuple(args, "iii", &x, &y, &z))
+    float yaw;
+    if (!PyArg_ParseTuple(args, "iiif", &x, &y, &z, &yaw))
     {
         return nullptr;
     }
     if (g_apmControllerSpeed)
     {
-        g_apmControllerSpeed(x, y, z);
+        g_apmControllerSpeed(x, y, z, yaw);
         Py_RETURN_NONE;
     }
     PyErr_SetString(PyExc_RuntimeError, "APMControllerSpeed pointer is null");
@@ -385,6 +388,7 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
     add_uint16("sys_pre_arm_flag", apmData._SYS_PreARMFlag);
     add_uint16("sys_failsafe_flag", apmData._SYS_FailSafeFlag);
     add_int("sys_apm_status", apmData._SYS_APMStatus);
+    add_float("att_euler_angle_yaw_v", apmData._ATT_EulerAngleYawV);
     add_float("nav_relative_head", apmData._NAV_Relative_Head);
     add_float("nav_global_head", apmData._NAV_Global_Head);
     add_int("nav_global_sat_count", apmData._NAV_Global_SATCount);

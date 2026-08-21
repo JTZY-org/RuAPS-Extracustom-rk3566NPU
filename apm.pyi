@@ -12,6 +12,7 @@ class TelemetryData(TypedDict, total=False):
     sys_pre_arm_flag: Optional[int]
     sys_failsafe_flag: Optional[int]
     sys_apm_status: Optional[int]
+    att_euler_angle_yaw_v: Optional[float]
     nav_relative_head: Optional[float]
     nav_global_head: Optional[float]
     nav_global_sat_count: Optional[int]
@@ -45,15 +46,15 @@ def disarm() -> None:
     """Disarm the flight controller."""
     ...
 
-def set_position(x: int, y: int, z: int, reset_home: bool = True) -> None:
+def set_position(x: int, y: int, z: int, yaw: float, reset_home: bool = True) -> None:
     """Set flight controller target position."""
     ...
 
-def set_gps_position(lat: int, lng: int, alt: int) -> None:
+def set_gps_position(lat: int, lng: int, yaw: float, alt: int) -> None:
     """Set flight controller target GPS position."""
     ...
 
-def set_speed(x: int, y: int, z: int) -> None:
+def set_speed(x: int, y: int, z: int, yaw: float) -> None:
     """Set flight controller speed."""
     ...
 

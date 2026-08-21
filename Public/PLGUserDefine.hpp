@@ -23,6 +23,7 @@ struct ControllerData
     float *_ATT_EulerAngle[3];
     float *_Gyro_AngleRate[3];
     int *_Mag_RawL[3];
+    float *_ATT_EulerAngleYawV;
 
     float *_Baro_Temp;
     float *_Baro_PressureHPA;
@@ -59,9 +60,9 @@ struct ControllerData
 
     void (*APMControllerARM)(void);
     void (*APMControllerDISARM)(void);
-    void (*APMControllerGPSPosition)(int lat, int lng, int alt);
-    void (*APMControllerPosition)(int x, int y, int z, bool resetHome);
-    void (*APMControllerSpeed)(int x, int y, int z);
+    void (*APMControllerGPSPosition)(int lat, int lng, float yawdeg, int alt);
+    void (*APMControllerPosition)(int x, int y, int z, float yawdeg, bool resetHome);
+    void (*APMControllerSpeed)(int x, int y, int z, float yawdegs);
     void (*APMControllerServo)(int pin, int PWMInUs);
 };
 

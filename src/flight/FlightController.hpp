@@ -59,7 +59,12 @@ public:
                 std::cout << "[FlightController] Executing Action: START LANDING (Move to Z=0)\n";
                 if (data.APMData.APMControllerPosition)
                 {
-                    data.APMData.APMControllerPosition(0, 0, 0, true);
+                    float realyawV = 0.0f;
+                    if (data.APMData._ATT_EulerAngleYawV != nullptr)
+                    {
+                        realyawV = *data.APMData._ATT_EulerAngleYawV;
+                    }
+                    data.APMData.APMControllerPosition(0, 0, 0, realyawV, true);
                 }
                 m_lowAltStartTime = std::chrono::steady_clock::now();
             }

@@ -47,9 +47,10 @@ proxychains ssh "${TARGET_DEST}" "mkdir -p /etc/rknn"
 MODEL_FILES=(
     # "${THIRDPARTY_DIR}/model/yolov8n.rknn"
     # "${THIRDPARTY_DIR}/model/coco_80_labels_list.txt"
-    "${WORKSPACE_DIR}/user_app.py"
-    "${WORKSPACE_DIR}/flight_mission.py"
-    "${WORKSPACE_DIR}/apm.pyi"
+    "${WORKSPACE_DIR}/python/user_app.py"
+    "${WORKSPACE_DIR}/python/flight_mission.py"
+    "${WORKSPACE_DIR}/python/color_detector.py"
+    "${WORKSPACE_DIR}/python/apm.pyi"
 )
 
 for model_file in "${MODEL_FILES[@]}"; do

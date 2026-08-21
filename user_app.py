@@ -4,10 +4,14 @@ import cv2
 import sys
 import apm
 import time
+import math
 from typing import TYPE_CHECKING
+import flight_mission
 
 if TYPE_CHECKING:
     from apm import TelemetryData
+
+INITIAL_STATUS_CHECKED = False
 
 def init(width: int, height: int, pixfmt: int) -> int:
     """
@@ -82,21 +86,46 @@ def debug_print_telemetry(telemetry: 'TelemetryData'):
 
     # Format output: 4 items per line, fixed-width columns
     lines = ["\033[H\033[2J", "=== TELEMETRY MONITOR (4 ITEMS/LINE) ==="]
+    
+    # Live Mission Dashboard at top of monitor
+    elapsed_mission = time.perf_counter() - flight_mission.STATE_START_TIME if flight_mission.MISSION_STATE != flight_mission.MS_IDLE else 0.0
+    lines.append(f"MISSION STATE: {flight_mission.MISSION_STATE:<12} | Elapsed: {elapsed_mission:.1f}s | Start Yaw: {flight_mission.START_YAW:.1f} | Target Yaw: {flight_mission.TARGET_YAW:.1f}")
+    
+    recv_packets = telemetry.get('BroadcastRecv', [])
+    recv_hex = ", ".join(p.hex().upper() for p in recv_packets) if recv_packets else "None"
+    lines.append(f"LAST RECV UDP: {recv_hex:<25}")
+    lines.append("---------------------------------------------------------------------------------")
+    
     for i in range(0, len(items), 4):
         chunk = items[i:i+4]
         line_str = " | ".join(f"{item:<22}" for item in chunk)
         lines.append(line_str)
-    lines.append("=========================================")
+        
+    lines.append("---------------------------------------------------------------------------------")
+    lines.append("Recent Mission Logs:")
+    for log in flight_mission.MISSION_LOGS:
+        lines.append(f"  {log}")
+    lines.append("=================================================================================")
     
     sys.stdout.write("\n".join(lines) + "\n")
     sys.stdout.flush()
 
 def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry: 'TelemetryData') -> int:
-    global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME
+    global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, PYTHON_LANDING, PYTHON_LANDING_START_TIME, INITIAL_STATUS_CHECKED
     start_time = time.perf_counter()
     
-    # if telemetry and FRAME_COUNTER % 5 == 0:
-        # debug_print_telemetry(telemetry)
+    if telemetry and FRAME_COUNTER % 5 == 0:
+        debug_print_telemetry(telemetry)
+        
+    if telemetry and not INITIAL_STATUS_CHECKED:
+        armed = telemetry.get('sys_arm_flag')
+        status = "UNLOCKED (ARMED)" if armed else "LOCKED (DISARMED)"
+        log_msg = f"[MISSION] Initial lock status check: {status}"
+        flight_mission.MISSION_LOGS.append(log_msg)
+        INITIAL_STATUS_CHECKED = True
+        
+    if telemetry:
+        flight_mission.run_mission_state_machine(telemetry)
     
     # 统计调用帧间隔（实际呼叫 FPS）
     current_time = start_time
@@ -122,33 +151,30 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                     apm.disarm()
                 elif len(p) >= 2 and p[0] == 0xB1 and p[1] == 0x01:
                     if not PYTHON_LANDING:
-                        sys.stdout.write("\n[Python] Received B1 01: Replicating Landing Logic (Position to 0,0,0)\n")
+                        sys.stdout.write("\n[Python] Received B1 01: Starting speed landing (50cm/s descent)\n")
                         sys.stdout.flush()
-                        realyaw = telemetry.get('att_euler_angle_yaw_v')
-                        if realyaw is None:
-                            realyaw = 0.0
-                        apm.set_position(0, 0, 0, realyaw, True)
                         PYTHON_LANDING = True
-                        PYTHON_LANDING_START_TIME = time.perf_counter()
+                elif len(p) >= 2 and p[0] == 0xB3 and p[1] == 0x01:
+                    sys.stdout.write("\n[Python] Received B3 01: Starting flight mission...\n")
+                    sys.stdout.flush()
+                    flight_mission.start_mission(telemetry)
+
 
     # Process Python Landing Telemetry Verification
     if PYTHON_LANDING:
+        realyaw = telemetry.get('att_euler_angle_yaw_v') if telemetry else None
+        if realyaw is None:
+            realyaw = 0.0
+        apm.set_speed(0, 0, 50, realyaw)
+        
         nav_relative_pos = telemetry.get('nav_relative_pos') if telemetry else None
         if nav_relative_pos and len(nav_relative_pos) >= 3 and nav_relative_pos[2] is not None:
             current_alt = nav_relative_pos[2]
-            if abs(current_alt) <= 8.0:
-                elapsed_ms = (time.perf_counter() - PYTHON_LANDING_START_TIME) * 1000.0
-                sys.stdout.write(f"\r[Python Landing] Alt: {current_alt:.2f} cm | stable: {elapsed_ms:.1f}ms / 800ms")
+            if current_alt <= 5.0:
+                sys.stdout.write(f"\n[Python Landing] Alt: {current_alt:.2f} cm < 5cm. Disarming...\n")
                 sys.stdout.flush()
-                if elapsed_ms >= 800.0:
-                    sys.stdout.write("\n[Python Landing] Touchdown stable for 800ms. Disarming...\n")
-                    sys.stdout.flush()
-                    apm.disarm()
-                    PYTHON_LANDING = False
-                    PYTHON_LANDING_START_TIME = None
-            else:
-                # Reset landing start time to current time if altitude is not close to ground
-                PYTHON_LANDING_START_TIME = time.perf_counter()
+                apm.disarm()
+                PYTHON_LANDING = False
 
     try:
         FRAME_COUNTER += 1

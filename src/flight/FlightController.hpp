@@ -53,20 +53,14 @@ public:
         // 2. Landing Telemetry Verification
         if (m_state == STATE_LANDING)
         {
-            // If timer start time is zero, it's the beginning of landing. Trigger physical moving.
-            if (m_lowAltStartTime.time_since_epoch().count() == 0)
+            if (data.APMData.APMControllerSpeed)
             {
-                std::cout << "[FlightController] Executing Action: START LANDING (Move to Z=0)\n";
-                if (data.APMData.APMControllerPosition)
+                float realyawV = 0.0f;
+                if (data.APMData._ATT_EulerAngleYawV != nullptr)
                 {
-                    float realyawV = 0.0f;
-                    if (data.APMData._ATT_EulerAngleYawV != nullptr)
-                    {
-                        realyawV = *data.APMData._ATT_EulerAngleYawV;
-                    }
-                    data.APMData.APMControllerPosition(0, 0, 0, realyawV, true);
+                    realyawV = *data.APMData._ATT_EulerAngleYawV;
                 }
-                m_lowAltStartTime = std::chrono::steady_clock::now();
+                data.APMData.APMControllerSpeed(0, 0, 50, realyawV);
             }
 
             double currentAlt = 999.0;
@@ -75,30 +69,15 @@ public:
                 currentAlt = *data.APMData._NAV_Relative_Pos[2];
             }
 
-            // Check if fused Z height is close to ground (within 15 cm)
-            if (std::abs(currentAlt) <= 8.0)
+            // Check if fused Z height is close to ground (less than 5 cm)
+            if (currentAlt <= 5.0)
             {
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::steady_clock::now() - m_lowAltStartTime)
-                                   .count();
-                LOG_EXCH << "[FlightController] Landing check. Elapsed: "
-                         << elapsed << " ms / 800 ms (Alt: " << currentAlt << " cm)" << std::endl;
-
-                if (elapsed >= 800)
+                std::cout << "[FlightController] Ground touchdown confirmed (<5cm). Disarming...\n";
+                if (data.APMData.APMControllerDISARM)
                 {
-                    std::cout << "[FlightController] Ground touchdown confirmed stably for 800ms. Disarming...\n";
-                    if (data.APMData.APMControllerDISARM)
-                    {
-                        data.APMData.APMControllerDISARM();
-                    }
-                    m_state = STATE_IDLE;
-                    m_lowAltStartTime = {}; // Reset timer
+                    data.APMData.APMControllerDISARM();
                 }
-            }
-            else
-            {
-                // Reset timer to current time to prevent pre-mature disarm if alt fluctuates
-                m_lowAltStartTime = std::chrono::steady_clock::now();
+                m_state = STATE_IDLE;
             }
         }
     }

@@ -8,6 +8,7 @@ import math
 from typing import TYPE_CHECKING
 import flight_mission
 import color_detector
+import human_tracker
 
 if TYPE_CHECKING:
     from apm import TelemetryData
@@ -91,6 +92,7 @@ def debug_print_telemetry(telemetry: 'TelemetryData'):
     # Live Mission Dashboard at top of monitor
     elapsed_mission = time.perf_counter() - flight_mission.STATE_START_TIME if flight_mission.MISSION_STATE != flight_mission.MS_IDLE else 0.0
     lines.append(f"MISSION STATE: {flight_mission.MISSION_STATE:<12} | Elapsed: {elapsed_mission:.1f}s | Start Yaw: {flight_mission.START_YAW:.1f} | Target Yaw: {flight_mission.TARGET_YAW:.1f}")
+    lines.append(f"HUMAN TRACKER: {human_tracker.g_human_tracker.get_status_str()}")
     
     recv_packets = telemetry.get('BroadcastRecv', [])
     recv_hex = ", ".join(p.hex().upper() for p in recv_packets) if recv_packets else "None"
@@ -103,8 +105,10 @@ def debug_print_telemetry(telemetry: 'TelemetryData'):
         lines.append(line_str)
         
     lines.append("---------------------------------------------------------------------------------")
-    lines.append("Recent Mission Logs:")
+    lines.append("Recent Mission / Tracker Logs:")
     for log in flight_mission.MISSION_LOGS:
+        lines.append(f"  {log}")
+    for log in human_tracker.g_human_tracker.logs:
         lines.append(f"  {log}")
     lines.append("=================================================================================")
     
@@ -159,7 +163,14 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                     sys.stdout.write("\n[Python] Received B3 01: Starting flight mission...\n")
                     sys.stdout.flush()
                     flight_mission.start_mission(telemetry)
-
+                elif len(p) >= 2 and p[0] == 0xB4 and p[1] == 0x01:
+                    sys.stdout.write("\n[Python] Received B4 01: Starting human yaw tracking...\n")
+                    sys.stdout.flush()
+                    human_tracker.g_human_tracker.start_tracking(telemetry)
+                elif len(p) >= 2 and p[0] == 0xB4 and p[1] == 0x00:
+                    sys.stdout.write("\n[Python] Received B4 00: Stopping human yaw tracking...\n")
+                    sys.stdout.flush()
+                    human_tracker.g_human_tracker.stop_tracking()
 
     # Process Python Landing Telemetry Verification
     if PYTHON_LANDING:
@@ -177,6 +188,10 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                 apm.disarm()
                 PYTHON_LANDING = False
 
+    # Process Human Target Yaw Tracking (when not in landing or mission state)
+    if telemetry and not PYTHON_LANDING and flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
+        human_tracker.g_human_tracker.update(telemetry, width, height)
+
     try:
         FRAME_COUNTER += 1
         
@@ -187,26 +202,26 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         latency = time.perf_counter() - start_time
         SUM_LATENCY += latency
 
-            # Only print detection result once every 30 frames
-            if FRAME_COUNTER % 30 == 0:
-                avg_latency_ms = (SUM_LATENCY / 30.0) * 1000.0
-                avg_fps = 30.0 / SUM_INTERVAL if SUM_INTERVAL > 0 else 0.0
-                
-                # 重置累加器
-                SUM_LATENCY = 0.0
-                SUM_INTERVAL = 0.0
+        # Only print detection result once every 30 frames
+        if FRAME_COUNTER % 30 == 0:
+            avg_latency_ms = (SUM_LATENCY / 30.0) * 1000.0
+            avg_fps = 30.0 / SUM_INTERVAL if SUM_INTERVAL > 0 else 0.0
+            
+            # 重置累加器
+            SUM_LATENCY = 0.0
+            SUM_INTERVAL = 0.0
 
-                target_str = f"Found: X={target_x}, Y={target_y}, Area={target_area:.1f}" if target_x != -1 else "No target"
-                temp = telemetry.get('cpu_temp') if telemetry else None
-                volt = telemetry.get('battery_voltage') if telemetry else None
-                arm = telemetry.get('sys_arm_flag') if telemetry else None
-                
-                # 示範讀取 C++ NPU 傳過來的追蹤結果
-                # detections = telemetry.get('detections') if telemetry else None
-                # if detections:
-                #     sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")
-                #     sys.stdout.flush()
-                
+            target_str = f"Found: X={target_x}, Y={target_y}, Area={target_area:.1f}" if target_x != -1 else "No target"
+            temp = telemetry.get('cpu_temp') if telemetry else None
+            volt = telemetry.get('battery_voltage') if telemetry else None
+            arm = telemetry.get('sys_arm_flag') if telemetry else None
+
+            # 示範讀取 C++ NPU 傳過來的追蹤結果
+            # detections = telemetry.get('detections') if telemetry else None
+            # if detections:
+            #     sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")
+            #     sys.stdout.flush()
+
 
     except Exception as e:
         import traceback

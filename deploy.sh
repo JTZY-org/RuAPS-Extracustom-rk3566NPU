@@ -50,6 +50,7 @@ MODEL_FILES=(
     "${WORKSPACE_DIR}/python/user_app.py"
     "${WORKSPACE_DIR}/python/flight_mission.py"
     "${WORKSPACE_DIR}/python/color_detector.py"
+    "${WORKSPACE_DIR}/python/human_tracker.py"
     "${WORKSPACE_DIR}/python/apm.pyi"
 )
 

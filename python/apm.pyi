@@ -1,6 +1,12 @@
 # apm.pyi - Type stub definition for C++ CPython 'apm' module and TelemetryData
 from typing import TypedDict, List, Optional
 
+class DetectionItem(TypedDict):
+    track_id: int
+    class_id: int
+    confidence: float
+    box: List[int]
+
 class TelemetryData(TypedDict, total=False):
     accel_clipped_times: Optional[int]
     accel_gforce: Optional[float]
@@ -37,6 +43,7 @@ class TelemetryData(TypedDict, total=False):
     rc_channel_raw: List[Optional[int]]
     ef_channel_raw: List[Optional[int]]
     BroadcastRecv: List[bytes]
+    detections: List[DetectionItem]
 
 def arm() -> None:
     """Arm the flight controller."""

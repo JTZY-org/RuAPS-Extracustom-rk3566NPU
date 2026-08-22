@@ -99,6 +99,7 @@ public:
             LOG_EXCH << std::dec << std::endl;
 
             // Unified Pre-check Filter: Reject packets unless it is emergency CC 00/01, OR (vehicle is ARMED AND (IDLE or duplicate LAND))
+            // Note: _SYS_ARMFlag == false indicates ARMED (unlocked), true indicates DISARMED (locked).
             if (!(packet.size() >= 2 && packet[0] == 0xCC && (packet[1] == 0x01 || packet[1] == 0x00)) &&
                 ((data.APMData._SYS_ARMFlag == nullptr || *data.APMData._SYS_ARMFlag) ||
                  (m_state != STATE_IDLE && !(packet.size() >= 2 && packet[0] == 0xB0 && packet[1] == 0x01))))

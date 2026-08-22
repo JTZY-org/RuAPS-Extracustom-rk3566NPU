@@ -26,7 +26,7 @@ def init(width: int, height: int, pixfmt: int) -> int:
     # Return 0 or initialization status
     return 0
 
-# 全局帧计数器与时间计量，用于统计 FPS 与 Latency
+# Global frame counter and timer for FPS and Latency measurement
 FRAME_COUNTER = 0
 LAST_CALL_TIME = None
 SUM_LATENCY = 0.0
@@ -123,7 +123,8 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     #     debug_print_telemetry(telemetry)
         
     if telemetry and not INITIAL_STATUS_CHECKED:
-        armed = telemetry.get('sys_arm_flag')
+        arm_flag = telemetry.get('sys_arm_flag')
+        armed = (arm_flag is False)
         status = "UNLOCKED (ARMED)" if armed else "LOCKED (DISARMED)"
         log_msg = f"[MISSION] Initial lock status check: {status}"
         flight_mission.MISSION_LOGS.append(log_msg)
@@ -132,7 +133,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     if telemetry:
         flight_mission.run_mission_state_machine(telemetry)
     
-    # 统计调用帧间隔（实际呼叫 FPS）
+    # Measure call interval (actual calling FPS)
     current_time = start_time
     if LAST_CALL_TIME is not None:
         interval = current_time - LAST_CALL_TIME
@@ -198,7 +199,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         # Call color detector module to get target info
         target_x, target_y, target_area = color_detector.detect_red_target(frame_bytes, width, height)
         
-        # 计算 Python 执行耗时并累加
+        # Accumulate Python execution latency
         latency = time.perf_counter() - start_time
         SUM_LATENCY += latency
 
@@ -207,7 +208,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
             avg_latency_ms = (SUM_LATENCY / 30.0) * 1000.0
             avg_fps = 30.0 / SUM_INTERVAL if SUM_INTERVAL > 0 else 0.0
             
-            # 重置累加器
+            # Reset accumulators
             SUM_LATENCY = 0.0
             SUM_INTERVAL = 0.0
 
@@ -216,7 +217,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
             volt = telemetry.get('battery_voltage') if telemetry else None
             arm = telemetry.get('sys_arm_flag') if telemetry else None
 
-            # 示範讀取 C++ NPU 傳過來的追蹤結果
+            # Demonstration of reading detections from C++ NPU
             # detections = telemetry.get('detections') if telemetry else None
             # if detections:
             #     sys.stdout.write(f"\n[Python] Active Tracks: {[{'id': d['track_id'], 'cls': d['class_id'], 'box': d['box']} for d in detections]}\n")

@@ -57,7 +57,8 @@ def start_mission(telemetry: 'TelemetryData'):
         MISSION_LOGS.append(log_msg)
         if len(MISSION_LOGS) > 3:
             MISSION_LOGS.pop(0)
-        armed = telemetry.get('sys_arm_flag') if telemetry else False
+        # sys_arm_flag: False = Armed (unlocked), True = Disarmed (locked)
+        armed = (telemetry.get('sys_arm_flag') is False) if telemetry else False
         if armed:
             set_mission_state(MS_TAKEOFF)
         else:
@@ -83,8 +84,8 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
         current_yaw = 0.0
 
     if MISSION_STATE == MS_ARMING:
-        # Check arm flag
-        armed = telemetry.get('sys_arm_flag')
+        # Check arm flag (False = Armed / unlocked)
+        armed = (telemetry.get('sys_arm_flag') is False)
         if armed:
             set_mission_state(MS_TAKEOFF)
         else:
@@ -156,8 +157,8 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             set_mission_state(MS_REARMING)
             
     elif MISSION_STATE == MS_REARMING:
-        # Arm again
-        armed = telemetry.get('sys_arm_flag')
+        # Arm again (False = Armed / unlocked)
+        armed = (telemetry.get('sys_arm_flag') is False)
         if armed:
             set_mission_state(MS_RETAKEOFF)
         else:

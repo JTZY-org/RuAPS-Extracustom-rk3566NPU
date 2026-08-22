@@ -14,7 +14,7 @@ class TelemetryData(TypedDict, total=False):
     baro_pressure_hpa: Optional[float]
     baro_agl_altitude_cm: Optional[float]
     rangefinder_agl_alt_cm: Optional[float]
-    sys_arm_flag: Optional[bool]
+    sys_arm_flag: Optional[bool]  # False: Armed (unlocked), True: Disarmed (locked)
     sys_pre_arm_flag: Optional[int]
     sys_failsafe_flag: Optional[int]
     sys_apm_status: Optional[int]

@@ -30,7 +30,7 @@ struct ControllerData
     float *_Baro_AGLAltitudeCM;
     double *_RangeFinder_AGLAltCM;
 
-    bool *_SYS_ARMFlag;
+    bool *_SYS_ARMFlag; // false: armed (unlocked), true: disarmed (locked)
     int *_SYS_TimeInfo[10];
     uint16_t *_SYS_PreARMFlag;
     uint16_t *_SYS_FailSafeFlag;

@@ -58,7 +58,7 @@ inline void nv12_to_rgb(uint8_t y_val, uint8_t u_val, uint8_t v_val, uint8_t &r,
     b = std::clamp(b_temp, 0, 255);
 }
 
-// Extract average HSV of a bounding box from NV12 data using "Focus Center Method" (中心收縮法)
+// Extract average HSV of a bounding box from NV12 data using "Focus Center Method" (center contraction)
 inline HSV get_box_average_hsv(const yolo_det_t& box, const uint8_t* nv12_data, int img_w, int img_h) {
     if (!nv12_data) return {0, 0, 0};
 

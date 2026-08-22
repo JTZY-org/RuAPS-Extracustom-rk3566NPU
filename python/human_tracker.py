@@ -70,7 +70,8 @@ class HumanTracker:
         self.lost_frames = 0
         self.start_time = time.perf_counter()
         
-        armed = telemetry.get('sys_arm_flag') if telemetry else False
+        # sys_arm_flag: False = Armed (unlocked), True = Disarmed (locked)
+        armed = (telemetry.get('sys_arm_flag') is False) if telemetry else False
         if armed:
             self.state = STATE_SEARCHING
             self.log("Tracking STARTED. Drone is ARMED. Searching for newest human track...")
@@ -117,7 +118,8 @@ class HumanTracker:
         if not telemetry:
             return
 
-        armed = telemetry.get('sys_arm_flag', False)
+        # sys_arm_flag: False = Armed (unlocked), True = Disarmed (locked)
+        armed = (telemetry.get('sys_arm_flag') is False)
         current_yaw = telemetry.get('att_euler_angle_yaw_v', 0.0)
         if current_yaw is None:
             current_yaw = 0.0

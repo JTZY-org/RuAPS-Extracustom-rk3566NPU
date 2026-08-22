@@ -514,6 +514,10 @@ bool PythonEngine::execute(const UserAppData &data, const std::vector<std::vecto
     PyObject *pArgs = Py_BuildValue("(OiiiO)", pFrameBytes, data.cameraFrame.width, data.cameraFrame.height, data.cameraFrame.pixfmt, pTelemetry);
 
     PyObject *pValue = PyObject_CallObject(g_pythonExchangeFunc, pArgs);
+    if (!pValue)
+    {
+        PyErr_Print();
+    }
 
     Py_XDECREF(pFrameBytes);
     Py_XDECREF(pTelemetry);

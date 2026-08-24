@@ -161,12 +161,12 @@ PyObject *PythonEngine::apm_PushBroadcast(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef APMMethods[] = {
-    {"arm", PythonEngine::apm_ARM, METH_NOARGS, "Arm the flight controller"},
-    {"disarm", PythonEngine::apm_DISARM, METH_NOARGS, "Disarm the flight controller"},
-    {"set_position", PythonEngine::apm_Position, METH_VARARGS, "Set flight controller target position (x, y, z, resetHome)"},
-    {"set_gps_position", PythonEngine::apm_GPSPosition, METH_VARARGS, "Set flight controller target GPS position (lat, lng, alt)"},
-    {"set_speed", PythonEngine::apm_Speed, METH_VARARGS, "Set flight controller speed (x, y, z)"},
-    {"set_servo", PythonEngine::apm_Servo, METH_VARARGS, "Set servo output (pin, pwm)"},
+    {"arm", PythonEngine::apm_ARM, METH_NOARGS, "Arm the flight controller (takes off to 50cm in UserAuto)"},
+    {"disarm", PythonEngine::apm_DISARM, METH_NOARGS, "Disarm the flight controller immediately"},
+    {"set_position", PythonEngine::apm_Position, METH_VARARGS, "Set flight controller target position in cm (x, y, z, yawdeg_+-180, resetHome)"},
+    {"set_gps_position", PythonEngine::apm_GPSPosition, METH_VARARGS, "Set flight controller target GPS position (lat_1e-7, lng_1e-7, yawdeg_+-180, alt)"},
+    {"set_speed", PythonEngine::apm_Speed, METH_VARARGS, "Set flight controller body-frame speed in cm/s (x, y, z, yaw_rate_deg_s)"},
+    {"set_servo", PythonEngine::apm_Servo, METH_VARARGS, "Set servo output (pin, pwm_1000_2000)"},
     {"push_broadcast", PythonEngine::apm_PushBroadcast, METH_VARARGS, "Push broadcast data"},
     {NULL, NULL, 0, NULL}};
 
@@ -384,7 +384,7 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
     add_float("baro_pressure_hpa", apmData._Baro_PressureHPA);
     add_float("baro_agl_altitude_cm", apmData._Baro_AGLAltitudeCM);
     add_double("rangefinder_agl_alt_cm", apmData._RangeFinder_AGLAltCM);
-    add_bool("sys_arm_flag", apmData._SYS_ARMFlag);
+    add_bool("sys_disarm_flag", apmData._SYS_DISARMFlag);
     add_uint16("sys_pre_arm_flag", apmData._SYS_PreARMFlag);
     add_uint16("sys_failsafe_flag", apmData._SYS_FailSafeFlag);
     add_int("sys_apm_status", apmData._SYS_APMStatus);

@@ -25,8 +25,8 @@ PERSON_CLASS_ID = 0          # COCO 80 class index for person
 MIN_CONFIDENCE = 0.40        # Minimum detection confidence
 MAX_LOST_FRAMES = 6          # Max consecutive frames without detection before declaring target lost (~200ms)
 DEADBAND_RATIO = 0.05        # Normalized deadband around image center (+/- 5%)
-KP_YAW = 25.0                # Proportional gain for yaw heading control (degrees per full normalized error)
-MAX_YAW_STEP = 15.0          # Max degree correction per update step to prevent jitter
+KP_YAW_RATE = 30.0           # Proportional gain for yaw rate control (deg/s per full unit normalized error)
+MAX_YAW_RATE = 45.0          # Max yaw angular velocity limit in deg/s
 
 
 class HumanTracker:
@@ -40,7 +40,7 @@ class HumanTracker:
         self.start_time: float = 0.0
         
         self.last_error_norm: float = 0.0
-        self.last_target_yaw: float = 0.0
+        self.last_yaw_rate: float = 0.0
         self.last_current_yaw: float = 0.0
         
         self.logs: List[str] = []
@@ -53,13 +53,12 @@ class HumanTracker:
         if len(self.logs) > 5:
             self.logs.pop(0)
 
-    def normalize_yaw(self, yaw: float) -> float:
-        """Normalizes yaw angle to [-180.0, 180.0] range."""
-        while yaw > 180.0:
-            yaw -= 360.0
-        while yaw < -180.0:
-            yaw += 360.0
-        return yaw
+    def is_drone_armed(self, telemetry: Optional['TelemetryData']) -> bool:
+        """Helper to determine if drone is armed based on sys_disarm_flag."""
+        if not telemetry:
+            return False
+        # sys_disarm_flag: False = Armed (unlocked), True = Disarmed (locked)
+        return telemetry.get('sys_disarm_flag') is False
 
     def start_tracking(self, telemetry: Optional['TelemetryData'] = None) -> None:
         """Enables tracking mode."""
@@ -70,8 +69,7 @@ class HumanTracker:
         self.lost_frames = 0
         self.start_time = time.perf_counter()
         
-        # sys_arm_flag: False = Armed (unlocked), True = Disarmed (locked)
-        armed = (telemetry.get('sys_arm_flag') is False) if telemetry else False
+        armed = self.is_drone_armed(telemetry)
         if armed:
             self.state = STATE_SEARCHING
             self.log("Tracking STARTED. Drone is ARMED. Searching for newest human track...")
@@ -118,8 +116,7 @@ class HumanTracker:
         if not telemetry:
             return
 
-        # sys_arm_flag: False = Armed (unlocked), True = Disarmed (locked)
-        armed = (telemetry.get('sys_arm_flag') is False)
+        armed = self.is_drone_armed(telemetry)
         current_yaw = telemetry.get('att_euler_angle_yaw_v', 0.0)
         if current_yaw is None:
             current_yaw = 0.0
@@ -189,7 +186,7 @@ class HumanTracker:
                 else:
                     self.state = STATE_SEARCHING
 
-        # 4. Heading (Yaw) Controller
+        # 4. Heading Angular Rate (Yaw Rate) Controller
         if self.state == STATE_TRACKING and self.current_box and len(self.current_box) == 4 and frame_width > 0:
             x1, y1, x2, y2 = self.current_box
             center_x = (x1 + x2) / 2.0
@@ -199,25 +196,24 @@ class HumanTracker:
             error_norm = (center_x - frame_center_x) / frame_center_x
             self.last_error_norm = error_norm
 
-            # Deadband check: if within center 5%, no yaw change needed
+            # Deadband check: if within center 5%, no rotation needed
             if abs(error_norm) < DEADBAND_RATIO:
-                delta_yaw = 0.0
+                yaw_rate = 0.0
             else:
-                # Calculate yaw adjustment with proportional gain & clamp to max step
-                raw_delta = KP_YAW * error_norm
-                delta_yaw = max(-MAX_YAW_STEP, min(MAX_YAW_STEP, raw_delta))
+                # Proportional control on yaw angular velocity (deg/s) clamped to MAX_YAW_RATE
+                raw_rate = KP_YAW_RATE * error_norm
+                yaw_rate = max(-MAX_YAW_RATE, min(MAX_YAW_RATE, raw_rate))
 
-            target_yaw = self.normalize_yaw(current_yaw + delta_yaw)
-            self.last_target_yaw = target_yaw
+            self.last_yaw_rate = yaw_rate
 
-            # Send command: only control yaw, keep linear speed at (0, 0, 0) for hovering
-            apm.set_speed(0, 0, 0, target_yaw)
+            # Send command: only control yaw rate (deg/s), keep body-frame speed at (0, 0, 0) for hovering
+            apm.set_speed(0, 0, 0, yaw_rate)
 
         elif self.state in (STATE_SEARCHING, STATE_TARGET_LOST):
-            # No valid target or searching: maintain current heading and hover
+            # No valid target or searching: maintain current heading (0 deg/s yaw rate) and hover
             self.last_error_norm = 0.0
-            self.last_target_yaw = current_yaw
-            apm.set_speed(0, 0, 0, current_yaw)
+            self.last_yaw_rate = 0.0
+            apm.set_speed(0, 0, 0, 0.0)
 
     def get_status_str(self) -> str:
         """Returns a compact formatted string of the current tracking status."""
@@ -228,7 +224,7 @@ class HumanTracker:
         box_str = f"[{self.current_box[0]},{self.current_box[1]},{self.current_box[2]},{self.current_box[3]}]" if self.current_box else "N/A"
         return (
             f"State: {self.state:<12} | Target: {target_info:<9} | "
-            f"Err: {self.last_error_norm:+.2f} | Yaw: {self.last_current_yaw:.1f}->{self.last_target_yaw:.1f} | "
+            f"Err: {self.last_error_norm:+.2f} | YawRate: {self.last_yaw_rate:+.1f}d/s | "
             f"Lost: {self.lost_frames}"
         )
 

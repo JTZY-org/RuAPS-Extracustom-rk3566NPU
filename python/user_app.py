@@ -44,7 +44,7 @@ def debug_print_telemetry(telemetry: 'TelemetryData'):
     
     # 1. Scalars
     scalars = [
-        "sys_arm_flag", "sys_pre_arm_flag", "sys_failsafe_flag", "sys_apm_status",
+        "sys_disarm_flag", "sys_pre_arm_flag", "sys_failsafe_flag", "sys_apm_status",
         "cpu_temp", "battery_voltage", "battery_voltage_single", "gyro_cycle_time",
         "baro_temp", "baro_pressure_hpa", "baro_agl_altitude_cm", "rangefinder_agl_alt_cm",
         "accel_clipped_times", "accel_gforce", "att_euler_angle_yaw_v",
@@ -123,9 +123,8 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     #     debug_print_telemetry(telemetry)
         
     if telemetry and not INITIAL_STATUS_CHECKED:
-        arm_flag = telemetry.get('sys_arm_flag')
-        armed = (arm_flag is False)
-        status = "UNLOCKED (ARMED)" if armed else "LOCKED (DISARMED)"
+        is_disarmed = telemetry.get('sys_disarm_flag')
+        status = "LOCKED (DISARMED)" if is_disarmed is True else "UNLOCKED (ARMED)"
         log_msg = f"[MISSION] Initial lock status check: {status}"
         flight_mission.MISSION_LOGS.append(log_msg)
         INITIAL_STATUS_CHECKED = True
@@ -175,10 +174,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
 
     # Process Python Landing Telemetry Verification
     if PYTHON_LANDING:
-        realyaw = telemetry.get('att_euler_angle_yaw_v') if telemetry else None
-        if realyaw is None:
-            realyaw = 0.0
-        apm.set_speed(0, 0, 50, realyaw)
+        apm.set_speed(0, 0, 50, 0.0)
         
         nav_relative_pos = telemetry.get('nav_relative_pos') if telemetry else None
         if nav_relative_pos and len(nav_relative_pos) >= 3 and nav_relative_pos[2] is not None:

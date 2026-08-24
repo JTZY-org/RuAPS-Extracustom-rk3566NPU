@@ -55,12 +55,7 @@ public:
         {
             if (data.APMData.APMControllerSpeed)
             {
-                float realyawV = 0.0f;
-                if (data.APMData._ATT_EulerAngleYawV != nullptr)
-                {
-                    realyawV = *data.APMData._ATT_EulerAngleYawV;
-                }
-                data.APMData.APMControllerSpeed(0, 0, 50, realyawV);
+                data.APMData.APMControllerSpeed(0, 0, 50, 0.0f);
             }
 
             double currentAlt = 999.0;
@@ -69,10 +64,10 @@ public:
                 currentAlt = *data.APMData._NAV_Relative_Pos[2];
             }
 
-            // Check if fused Z height is close to ground (less than 5 cm)
-            if (currentAlt <= 5.0)
+            // Check if fused Z height is close to ground (less than 3 cm)
+            if (currentAlt <= 3.0)
             {
-                std::cout << "[FlightController] Ground touchdown confirmed (<5cm). Disarming...\n";
+                std::cout << "[FlightController] Ground touchdown confirmed (<3cm). Disarming...\n";
                 if (data.APMData.APMControllerDISARM)
                 {
                     data.APMData.APMControllerDISARM();

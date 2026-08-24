@@ -181,10 +181,11 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             
     elif MISSION_STATE == MS_LANDING_1:
         # Land in place at 50 cm/s descent
-        if alt <= 10.0 or (elapsed >= 2.0 and alt <= 20.0):
-            sys.stdout.write(f"\n[MISSION] Touchdown confirmed (alt={alt:.1f}cm). Disarming and resetting Home...\n")
+        if alt <= 3.0:
+            sys.stdout.write(f"\n[MISSION] Touchdown confirmed (alt={alt:.1f}cm <= 3cm). Disarming, setting speed to 0 and resetting Home...\n")
             sys.stdout.flush()
             apm.disarm()
+            apm.set_speed(0, 0, 0, 0.0)
             apm.set_position(0, 0, 0, TARGET_YAW, True)
             set_mission_state(MS_GROUND_WAIT)
         else:
@@ -207,8 +208,8 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             # Continuously pulse arm command on ground
             apm.arm()
             if now - LAST_ARM_TIME >= 1.0:
-                disarm_flag = telemetry.get('sys_arm_flag') if telemetry else None
-                sys.stdout.write(f"\n[MISSION] MS_REARMING: Pulsing apm.arm() (sys_arm_flag={disarm_flag}, alt={alt:.1f}cm)...\n")
+                disarm_flag = telemetry.get('sys_disarm_flag') if telemetry else None
+                sys.stdout.write(f"\n[MISSION] MS_REARMING: Pulsing apm.arm() (sys_disarm_flag={disarm_flag}, alt={alt:.1f}cm)...\n")
                 sys.stdout.flush()
                 LAST_ARM_TIME = now
                 
@@ -257,10 +258,11 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             
     elif MISSION_STATE == MS_FINAL_LANDING:
         # Land in place at 50 cm/s
-        if alt <= 10.0 or (elapsed >= 2.0 and alt <= 20.0):
-            sys.stdout.write(f"\n[MISSION] Final Touchdown confirmed (alt={alt:.1f}cm). Mission complete!\n")
+        if alt <= 3.0:
+            sys.stdout.write(f"\n[MISSION] Final Touchdown confirmed (alt={alt:.1f}cm <= 3cm). Disarming and setting speed to 0...\n")
             sys.stdout.flush()
             apm.disarm()
+            apm.set_speed(0, 0, 0, 0.0)
             set_mission_state(MS_DONE)
         else:
             apm.set_speed(0, 0, 50, 0.0)

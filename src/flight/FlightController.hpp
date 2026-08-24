@@ -46,6 +46,10 @@ public:
             {
                 data.APMData.APMControllerDISARM();
             }
+            if (data.APMData.APMControllerSpeed)
+            {
+                data.APMData.APMControllerSpeed(0, 0, 0, 0.0f);
+            }
             m_state = STATE_IDLE; // Back to idle after execution
             return;
         }
@@ -67,10 +71,14 @@ public:
             // Check if fused Z height is close to ground (less than 3 cm)
             if (currentAlt <= 3.0)
             {
-                std::cout << "[FlightController] Ground touchdown confirmed (<3cm). Disarming...\n";
+                std::cout << "[FlightController] Ground touchdown confirmed (<3cm). Disarming and setting speed to 0...\n";
                 if (data.APMData.APMControllerDISARM)
                 {
                     data.APMData.APMControllerDISARM();
+                }
+                if (data.APMData.APMControllerSpeed)
+                {
+                    data.APMData.APMControllerSpeed(0, 0, 0, 0.0f);
                 }
                 m_state = STATE_IDLE;
             }

@@ -36,6 +36,41 @@ SUM_INTERVAL = 0.0
 PYTHON_LANDING = False
 PYTHON_LANDING_START_TIME = None
 
+# RC Channel 12 Test State Tracking for ARM/DISARM
+LAST_CH12_STATE = None
+
+def check_rc_ch12_arm_disarm(telemetry: 'TelemetryData'):
+    """
+    Test feature: Monitors RC Channel 12 (rc_channel_raw[11]) to trigger Arm / Disarm.
+    - Value >= 1700 us -> Triggers apm.arm()
+    - Value <= 1300 us -> Triggers apm.disarm()
+    """
+    global LAST_CH12_STATE
+    if not telemetry:
+        return
+    rc_raw = telemetry.get('rc_channel_raw')
+    if not rc_raw or len(rc_raw) < 12:
+        return
+    ch12_val = rc_raw[11]  # Channel 12 is at index 11 (0-indexed)
+    if ch12_val is None or ch12_val <= 0:
+        return
+
+    if ch12_val >= 1700:
+        if LAST_CH12_STATE != 'HIGH':
+            LAST_CH12_STATE = 'HIGH'
+            sys.stdout.write(f"\n[RC Control] CH12 switched to HIGH ({ch12_val} us): Triggering apm.arm()...\n")
+            sys.stdout.flush()
+            apm.arm()
+    elif ch12_val <= 1300:
+        if LAST_CH12_STATE != 'LOW':
+            LAST_CH12_STATE = 'LOW'
+            sys.stdout.write(f"\n[RC Control] CH12 switched to LOW ({ch12_val} us): Triggering apm.disarm()...\n")
+            sys.stdout.flush()
+            apm.disarm()
+    else:
+        if LAST_CH12_STATE not in ('MID', None):
+            LAST_CH12_STATE = 'MID'
+
 def debug_print_telemetry(telemetry: 'TelemetryData'):
     if not telemetry:
         return
@@ -131,6 +166,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         
     if telemetry:
         flight_mission.run_mission_state_machine(telemetry)
+        check_rc_ch12_arm_disarm(telemetry)
     
     # Measure call interval (actual calling FPS)
     current_time = start_time

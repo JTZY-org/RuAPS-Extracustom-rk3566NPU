@@ -9,62 +9,40 @@ TARGET_DEST="${TARGET_USER}@${TARGET_IP}"
 # Source directories
 WORKSPACE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${WORKSPACE_DIR}/build"
-THIRDPARTY_DIR="${WORKSPACE_DIR}/Thirdparty"
 
 echo "========================================="
-echo " Deploying Extracustom-rk3566NPU to Target"
+echo " Deploying Extracustom-rk3566NPU via CPack"
 echo " Target: ${TARGET_DEST}"
 echo "========================================="
 
-# 1. Deploy all .so files to /lib/
-echo ">>> Step 1: Deploying shared libraries (.so) to target's /lib/..."
+# 1. Build and package using CPack
+echo ">>> Step 1: Compiling with Ninja..."
+ninja -C "${BUILD_DIR}"
 
-# Collect target .so files
-SO_FILES=(
-    "${BUILD_DIR}/libUserApp.so"
-    # "${BUILD_DIR}/librga/librga.so"
-    # "${THIRDPARTY_DIR}/lib/librknnrt.so"
-)
+echo ">>> Step 2: Generating DEB package with CPack..."
+(cd "${BUILD_DIR}" && cpack)
 
-for so_file in "${SO_FILES[@]}"; do
-    if [ -f "$so_file" ]; then
-        echo "Uploading: $(basename "$so_file") -> /lib/"
-        proxychains scp "$so_file" "${TARGET_DEST}:/lib/"
-    else
-        echo "Error: Required shared library '$so_file' not found!"
-        exit 1
-    fi
-done
+DEB_FILE=$(find "${BUILD_DIR}" -maxdepth 1 -name "extracustom-userapp_*.deb" -print -quit)
 
-# 2. Deploy model and label files to /etc/rknn
+if [ -z "$DEB_FILE" ] || [ ! -f "$DEB_FILE" ]; then
+    echo "Error: CPack DEB package not found in ${BUILD_DIR}!"
+    exit 1
+fi
+
+DEB_NAME=$(basename "$DEB_FILE")
+echo ">>> Generated package: ${DEB_NAME}"
+
+# 2. Upload DEB package to target /tmp/
 echo ""
-echo ">>> Step 2: Deploying model and label files to target's /etc/rknn/..."
+echo ">>> Step 3: Uploading ${DEB_NAME} to target /tmp/..."
+proxychains scp "$DEB_FILE" "${TARGET_DEST}:/tmp/"
 
-# Ensure target directory /etc/rknn exists
-echo "Creating remote directory /etc/rknn..."
-proxychains ssh "${TARGET_DEST}" "mkdir -p /etc/rknn"
-
-MODEL_FILES=(
-    # "${THIRDPARTY_DIR}/model/yolov8n.rknn"
-    # "${THIRDPARTY_DIR}/model/coco_80_labels_list.txt"
-    "${WORKSPACE_DIR}/python/user_app.py"
-    "${WORKSPACE_DIR}/python/flight_mission.py"
-    "${WORKSPACE_DIR}/python/color_detector.py"
-    "${WORKSPACE_DIR}/python/human_tracker.py"
-    "${WORKSPACE_DIR}/python/apm.pyi"
-)
-
-for model_file in "${MODEL_FILES[@]}"; do
-    if [ -f "$model_file" ]; then
-        echo "Uploading: $(basename "$model_file") -> /etc/rknn/"
-        proxychains scp "$model_file" "${TARGET_DEST}:/etc/rknn/"
-    else
-        echo "Error: Required model/label file '$model_file' not found!"
-        exit 1
-    fi
-done
+# 3. Install package on target via opkg
+echo ""
+echo ">>> Step 4: Installing package on target via opkg..."
+proxychains ssh "${TARGET_DEST}" "opkg install --force-overwrite --force-reinstall --force-downgrade /tmp/${DEB_NAME} && rm -f /tmp/${DEB_NAME} && sync"
 
 echo ""
 echo "========================================="
-echo " Deployment Completed Successfully!"
+echo " Deployment & Installation Completed Successfully!"
 echo "========================================="

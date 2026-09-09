@@ -3,7 +3,13 @@
 #include <Python.h>
 #include <string>
 #include <mutex>
+#include <chrono>
 #include "Public/PLGUserDefine.hpp"
+
+// Set to 1 to enable Python dynamic hot-reload during development; set to 0 to disable in flight/production
+#ifndef ENABLE_PYTHON_HOT_RELOAD
+#define ENABLE_PYTHON_HOT_RELOAD 1
+#endif
 
 class PythonEngine
 {
@@ -26,6 +32,11 @@ public:
     static PyObject* apm_PushBroadcast(PyObject* self, PyObject* args);
 
 private:
+#if ENABLE_PYTHON_HOT_RELOAD
+    bool checkAndReloadPython(const ControllerData &apmData);
+    bool reloadModule();
+    uint64_t getDirectoryFingerprint() const;
+#endif
 
     static PyObject* packFloatArray(float* const* arr, int size);
     static PyObject* packIntArray(int* const* arr, int size);
@@ -41,4 +52,14 @@ private:
     mutable std::mutex m_mutex;
     bool m_initialized;
     bool m_affinitySet;
+
+#if ENABLE_PYTHON_HOT_RELOAD
+    V4L2Tools::V4l2Info m_vinfo;
+    std::string m_scriptPath;
+    uint64_t m_lastFingerprint;
+    uint64_t m_pendingFingerprint;
+    std::chrono::steady_clock::time_point m_lastCheckTime;
+    std::chrono::steady_clock::time_point m_pendingChangeTime;
+    static constexpr int HOT_RELOAD_SETTLE_SECONDS = 5;
+#endif
 };

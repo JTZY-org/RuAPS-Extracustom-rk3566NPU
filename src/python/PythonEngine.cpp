@@ -3,6 +3,12 @@
 #include <vector>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/stat.h>
+#include <fstream>
+#include <cstring>
+#include <filesystem>
+#include <algorithm>
+#include <sstream>
 #include "src/npu/ProtocolSerializer.hpp"
 
 namespace
@@ -187,8 +193,16 @@ PyMODINIT_FUNC PyInit_apm(void)
 }
 
 PythonEngine::PythonEngine()
-    : m_pythonModule(nullptr), g_pythonInitFunc(nullptr), g_pythonExchangeFunc(nullptr), m_mainThreadState(nullptr), m_initialized(false), m_affinitySet(false)
+    : m_pythonModule(nullptr), g_pythonInitFunc(nullptr), g_pythonExchangeFunc(nullptr),
+      m_mainThreadState(nullptr), m_initialized(false), m_affinitySet(false)
+#if ENABLE_PYTHON_HOT_RELOAD
+      , m_lastFingerprint(0), m_pendingFingerprint(0), m_lastCheckTime(std::chrono::steady_clock::now()),
+      m_pendingChangeTime(std::chrono::steady_clock::time_point::min())
+#endif
 {
+#if ENABLE_PYTHON_HOT_RELOAD
+    std::memset(&m_vinfo, 0, sizeof(m_vinfo));
+#endif
 }
 
 PythonEngine::~PythonEngine()
@@ -202,11 +216,15 @@ bool PythonEngine::initialize(const V4L2Tools::V4l2Info &vinfo)
     if (m_initialized)
         return true;
 
+#if ENABLE_PYTHON_HOT_RELOAD
+    m_vinfo = vinfo;
+#endif
+
     std::cout << "[PythonEngine] Registering APM module & Initializing Python..." << std::endl;
     PyImport_AppendInittab("apm", PyInit_apm);
     Py_Initialize();
 
-    PyRun_SimpleString("import sys; sys.path.append('/etc/rknn')");
+    PyRun_SimpleString("import sys; sys.path.append('/etc/rknn'); sys.path.append('.')");
 
     m_pythonModule = PyImport_ImportModule("user_app");
     if (m_pythonModule != nullptr)
@@ -222,6 +240,35 @@ bool PythonEngine::initialize(const V4L2Tools::V4l2Info &vinfo)
             Py_XDECREF(pArgs);
             Py_XDECREF(pValue);
         }
+
+#if ENABLE_PYTHON_HOT_RELOAD
+        // Determine real script file path for hot reload
+        PyObject *pFileObj = PyObject_GetAttrString(m_pythonModule, "__file__");
+        if (pFileObj)
+        {
+            const char *pathStr = PyUnicode_AsUTF8(pFileObj);
+            if (pathStr)
+            {
+                m_scriptPath = pathStr;
+            }
+            Py_DECREF(pFileObj);
+        }
+        if (m_scriptPath.empty())
+        {
+            m_scriptPath = "/etc/rknn/user_app.py";
+        }
+        if (m_scriptPath.size() > 4 && m_scriptPath.substr(m_scriptPath.size() - 4) == ".pyc")
+        {
+            m_scriptPath = m_scriptPath.substr(0, m_scriptPath.size() - 1);
+        }
+
+        m_lastFingerprint = getDirectoryFingerprint();
+        m_pendingFingerprint = 0;
+        m_lastCheckTime = std::chrono::steady_clock::now();
+        std::cout << "[PythonEngine] Monitoring Python scripts around: " << m_scriptPath
+                  << " (initial fingerprint: 0x" << std::hex << m_lastFingerprint << std::dec << ")" << std::endl;
+#endif
+
         m_initialized = true;
         m_mainThreadState = PyEval_SaveThread(); // Release GIL
         return true;
@@ -255,6 +302,12 @@ void PythonEngine::cleanup()
 
     std::cout << "[PythonEngine] Cleaned up Python references." << std::endl;
     m_initialized = false;
+#if ENABLE_PYTHON_HOT_RELOAD
+    m_scriptPath.clear();
+    m_lastFingerprint = 0;
+    m_pendingFingerprint = 0;
+    m_pendingChangeTime = std::chrono::steady_clock::time_point::min();
+#endif
 }
 
 PyObject *PythonEngine::packFloatArray(float *const *arr, int size)
@@ -472,10 +525,305 @@ PyObject *PythonEngine::buildTelemetryDict(const ControllerData &apmData, const 
     return pTelemetry;
 }
 
+#if ENABLE_PYTHON_HOT_RELOAD
+uint64_t PythonEngine::getDirectoryFingerprint() const
+{
+    uint64_t hash = 14695981039346656037ULL; // FNV-1a 64-bit offset basis
+    try
+    {
+        std::filesystem::path p(m_scriptPath);
+        if (std::filesystem::exists(p))
+        {
+            std::filesystem::path dir = p.parent_path();
+            if (dir.empty())
+            {
+                dir = ".";
+            }
+            std::vector<std::string> pyFiles;
+            for (const auto &entry : std::filesystem::directory_iterator(dir))
+            {
+                if (entry.is_regular_file() && entry.path().extension() == ".py")
+                {
+                    pyFiles.push_back(entry.path().string());
+                }
+            }
+            std::sort(pyFiles.begin(), pyFiles.end());
+
+            for (const auto &filePath : pyFiles)
+            {
+                struct stat st;
+                if (stat(filePath.c_str(), &st) == 0)
+                {
+                    // Mix filename
+                    for (char c : filePath)
+                    {
+                        hash ^= static_cast<uint64_t>(c);
+                        hash *= 1099511628211ULL;
+                    }
+                    // Mix mtime (seconds) - detects if newer OR older!
+                    uint64_t mtimeSec = static_cast<uint64_t>(st.st_mtime);
+                    hash ^= mtimeSec;
+                    hash *= 1099511628211ULL;
+
+                    // Mix size
+                    uint64_t fsize = static_cast<uint64_t>(st.st_size);
+                    hash ^= fsize;
+                    hash *= 1099511628211ULL;
+
+                    // Mix inode (detects replacement via scp, mv, opkg)
+                    uint64_t inodeNum = static_cast<uint64_t>(st.st_ino);
+                    hash ^= inodeNum;
+                    hash *= 1099511628211ULL;
+                }
+            }
+        }
+    }
+    catch (const std::exception &e)
+    {
+        struct stat st;
+        if (stat(m_scriptPath.c_str(), &st) == 0)
+        {
+            hash ^= static_cast<uint64_t>(st.st_mtime);
+            hash ^= static_cast<uint64_t>(st.st_size);
+            hash ^= static_cast<uint64_t>(st.st_ino);
+        }
+    }
+    return hash;
+}
+
+bool PythonEngine::checkAndReloadPython(const ControllerData &apmData)
+{
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastCheckTime).count() < 500)
+    {
+        return false;
+    }
+    m_lastCheckTime = now;
+
+    if (m_scriptPath.empty())
+        return false;
+
+    uint64_t currentFingerprint = getDirectoryFingerprint();
+    if (currentFingerprint == 0)
+    {
+        return false;
+    }
+
+    // No modifications detected
+    if (currentFingerprint == m_lastFingerprint)
+    {
+        m_pendingFingerprint = 0;
+        return false;
+    }
+
+    // A change is detected (fingerprint is different from loaded version, newer or older)
+    if (currentFingerprint != m_pendingFingerprint)
+    {
+        m_pendingFingerprint = currentFingerprint;
+        m_pendingChangeTime = now;
+        std::cout << "[PythonEngine] Detected script modification (fingerprint changed: 0x"
+                  << std::hex << currentFingerprint << std::dec
+                  << "). Waiting " << HOT_RELOAD_SETTLE_SECONDS 
+                  << "s for writes/transfers to settle..." << std::endl;
+        return false;
+    }
+
+    // Fingerprint has remained stable. Check if settle period has elapsed
+    auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(now - m_pendingChangeTime).count();
+    if (elapsedSec < HOT_RELOAD_SETTLE_SECONDS)
+    {
+        // Still within quiet debounce window
+        return false;
+    }
+
+    // Settle period passed with zero further write activity!
+    // Check main script size to prevent reading during truncated write
+    struct stat st;
+    if (stat(m_scriptPath.c_str(), &st) != 0 || st.st_size <= 0)
+    {
+        std::cerr << "[PythonEngine] Warning: Script file size is 0 or inaccessible, waiting..." << std::endl;
+        m_pendingChangeTime = now;
+        return false;
+    }
+
+    std::cout << "[PythonEngine] Settle period (" << HOT_RELOAD_SETTLE_SECONDS 
+              << "s) passed. Performing safe hot-reload..." << std::endl;
+
+    bool success = reloadModule();
+    if (success)
+    {
+        m_lastFingerprint = m_pendingFingerprint;
+        m_pendingFingerprint = 0;
+        std::cout << "[PythonEngine] Python scripts hot-reload completed successfully." << std::endl;
+    }
+    else
+    {
+        std::cerr << "[PythonEngine] Python scripts hot-reload failed. Existing instance preserved. Will retry in "
+                  << HOT_RELOAD_SETTLE_SECONDS << "s..." << std::endl;
+        m_pendingChangeTime = now;
+    }
+
+    return success;
+}
+
+bool PythonEngine::reloadModule()
+{
+    PyGILState_STATE gstate = PyGILState_Ensure();
+
+    // 1. Syntax check on main script before reload using Py_CompileString
+    std::ifstream file(m_scriptPath);
+    if (!file.is_open())
+    {
+        std::cerr << "[PythonEngine] Cannot open file for syntax check: " << m_scriptPath << std::endl;
+        PyGILState_Release(gstate);
+        return false;
+    }
+    std::string code((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    file.close();
+
+    PyObject *compiledCode = Py_CompileString(code.c_str(), m_scriptPath.c_str(), Py_file_input);
+    if (!compiledCode)
+    {
+        std::cerr << "[PythonEngine] Syntax check failed on " << m_scriptPath << "! Reload aborted:" << std::endl;
+        PyErr_Print();
+        PyGILState_Release(gstate);
+        return false;
+    }
+    Py_DECREF(compiledCode);
+
+    // 2. Call optional cleanup() on existing module
+    if (m_pythonModule)
+    {
+        PyObject *pCleanup = PyObject_GetAttrString(m_pythonModule, "cleanup");
+        if (pCleanup && PyCallable_Check(pCleanup))
+        {
+            PyObject *res = PyObject_CallObject(pCleanup, nullptr);
+            Py_XDECREF(res);
+        }
+        Py_XDECREF(pCleanup);
+        PyErr_Clear();
+    }
+
+    // 3. Release old function pointers
+    Py_XDECREF(g_pythonInitFunc);
+    Py_XDECREF(g_pythonExchangeFunc);
+    g_pythonInitFunc = nullptr;
+    g_pythonExchangeFunc = nullptr;
+
+    // 3.5. Dynamically evict all project submodules from sys.modules so they reload cleanly from disk
+    try
+    {
+        std::filesystem::path scriptP(m_scriptPath);
+        std::string projectDir = scriptP.parent_path().string();
+        if (projectDir.empty())
+        {
+            projectDir = ".";
+        }
+        std::string projectDirWithSlash = projectDir;
+        if (projectDirWithSlash.back() != '/' && projectDirWithSlash.back() != '\\')
+        {
+            projectDirWithSlash += '/';
+        }
+
+        PyObject *modulesDict = PyImport_GetModuleDict();
+        if (modulesDict && PyDict_Check(modulesDict))
+        {
+            std::vector<std::string> submodulesToEvict;
+            PyObject *key = nullptr, *value = nullptr;
+            Py_ssize_t pos = 0;
+            while (PyDict_Next(modulesDict, &pos, &key, &value))
+            {
+                if (!key || !value || !PyUnicode_Check(key))
+                    continue;
+                const char *modName = PyUnicode_AsUTF8(key);
+                if (!modName || std::strcmp(modName, "user_app") == 0 || std::strcmp(modName, "apm") == 0)
+                    continue;
+
+                PyObject *fileAttr = PyObject_GetAttrString(value, "__file__");
+                if (fileAttr)
+                {
+                    if (PyUnicode_Check(fileAttr))
+                    {
+                        const char *modFilePath = PyUnicode_AsUTF8(fileAttr);
+                        if (modFilePath && std::string(modFilePath).rfind(projectDirWithSlash, 0) == 0)
+                        {
+                            submodulesToEvict.push_back(modName);
+                        }
+                    }
+                    Py_DECREF(fileAttr);
+                }
+                PyErr_Clear();
+            }
+            for (const auto &name : submodulesToEvict)
+            {
+                std::cout << "[PythonEngine] Evicting submodule from sys.modules: " << name << std::endl;
+                if (PyDict_DelItemString(modulesDict, name.c_str()) != 0)
+                {
+                    PyErr_Clear();
+                }
+            }
+        }
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "[PythonEngine] Warning during submodule eviction: " << e.what() << std::endl;
+    }
+
+    // Ensure error indicator is completely clear before invoking reload
+    PyErr_Clear();
+
+    // 4. Reload module
+    PyObject *reloaded = PyImport_ReloadModule(m_pythonModule);
+    if (!reloaded)
+    {
+        std::cerr << "[PythonEngine] PyImport_ReloadModule failed:" << std::endl;
+        PyErr_Print();
+        // Restore function pointers from existing module reference if possible
+        if (m_pythonModule)
+        {
+            g_pythonInitFunc = PyObject_GetAttrString(m_pythonModule, "init");
+            g_pythonExchangeFunc = PyObject_GetAttrString(m_pythonModule, "exchange");
+        }
+        PyGILState_Release(gstate);
+        return false;
+    }
+
+    Py_XDECREF(m_pythonModule);
+    m_pythonModule = reloaded;
+
+    // 5. Re-bind function pointers
+    g_pythonInitFunc = PyObject_GetAttrString(m_pythonModule, "init");
+    g_pythonExchangeFunc = PyObject_GetAttrString(m_pythonModule, "exchange");
+
+    // 6. Call new init()
+    if (g_pythonInitFunc && PyCallable_Check(g_pythonInitFunc))
+    {
+        std::cout << "[PythonEngine] Calling reloaded Python init()..." << std::endl;
+        PyObject *pArgs = Py_BuildValue("(iii)", m_vinfo.ImgWidth, m_vinfo.ImgHeight, m_vinfo.PixFormat);
+        PyObject *pValue = PyObject_CallObject(g_pythonInitFunc, pArgs);
+        Py_XDECREF(pArgs);
+        Py_XDECREF(pValue);
+    }
+
+    PyGILState_Release(gstate);
+    return (g_pythonExchangeFunc != nullptr && PyCallable_Check(g_pythonExchangeFunc));
+}
+#endif
+
 bool PythonEngine::execute(const UserAppData &data, const std::vector<std::vector<uint8_t>> &broadcastPackets)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_initialized || !g_pythonExchangeFunc || !PyCallable_Check(g_pythonExchangeFunc))
+    if (!m_initialized)
+    {
+        return false;
+    }
+
+#if ENABLE_PYTHON_HOT_RELOAD
+    // Safe dynamic hot-reload check
+    checkAndReloadPython(data.APMData);
+#endif
+
+    if (!g_pythonExchangeFunc || !PyCallable_Check(g_pythonExchangeFunc))
     {
         return false;
     }

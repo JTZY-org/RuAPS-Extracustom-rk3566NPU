@@ -202,8 +202,10 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     try:
         FRAME_COUNTER += 1
         
-        # Call color detector module to get target info
-        target_x, target_y, target_area = color_detector.detect_red_target(frame_bytes, width, height)
+        target_x, target_y, target_area = -1, -1, 0.0
+        # Call color detector module only when valid frame is present
+        if frame_bytes and width > 0 and height > 0:
+            target_x, target_y, target_area = color_detector.detect_red_target(frame_bytes, width, height)
         
         # Accumulate Python execution latency
         latency = time.perf_counter() - start_time

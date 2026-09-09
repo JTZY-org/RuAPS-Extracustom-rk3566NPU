@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import flight_mission
 import color_detector
 import human_tracker
+import servo_controller
 
 if TYPE_CHECKING:
     from apm import TelemetryData
@@ -36,41 +37,6 @@ SUM_INTERVAL = 0.0
 PYTHON_LANDING = False
 PYTHON_LANDING_START_TIME = None
 
-# RC Channel 12 Test State Tracking for ARM/DISARM
-LAST_CH12_STATE = None
-
-def check_rc_ch12_arm_disarm(telemetry: 'TelemetryData'):
-    """
-    Monitors RC Channel 12 (rc_channel_raw[11]) to trigger Arm / Landing on edge transitions.
-    - Transition to HIGH (>= 1700 us) -> Triggers apm.arm()
-    - Transition to LOW (<= 1300 us) -> Triggers landing logic (PYTHON_LANDING = True)
-    """
-    global LAST_CH12_STATE, PYTHON_LANDING
-    if not telemetry:
-        return
-    rc_raw = telemetry.get('rc_channel_raw')
-    if not rc_raw or len(rc_raw) < 12:
-        return
-    ch12_val = rc_raw[11]  # Channel 12 is at index 11 (0-indexed)
-    if ch12_val is None or ch12_val <= 0:
-        return
-
-    current_state = 'HIGH' if ch12_val >= 1700 else ('LOW' if ch12_val <= 1300 else 'MID')
-
-    # Initial state recording without triggering actions
-    if LAST_CH12_STATE is None:
-        LAST_CH12_STATE = current_state
-        return
-
-    if current_state != LAST_CH12_STATE:
-        if current_state == 'HIGH':
-            PYTHON_LANDING = False
-            if flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
-                apm.arm()
-        elif current_state == 'LOW':
-            if flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
-                PYTHON_LANDING = True
-        LAST_CH12_STATE = current_state
 
 def debug_print_telemetry(telemetry: 'TelemetryData'):
     if not telemetry:
@@ -167,7 +133,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         
     if telemetry:
         flight_mission.run_mission_state_machine(telemetry)
-        check_rc_ch12_arm_disarm(telemetry)
+        servo_controller.g_servo_controller.update(telemetry)
     
     # Measure call interval (actual calling FPS)
     current_time = start_time
@@ -183,18 +149,18 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
             sys.stdout.write(f"\n[Python] BroadcastRecv Packets: {[p.hex() for p in broadcast_packets]}\n")
             sys.stdout.flush()
             for p in broadcast_packets:
-                if len(p) >= 2 and p[0] == 0xCB and p[1] == 0x01:
-                    sys.stdout.write("\n[Python] Received CB 01: Arming flight controller\n")
+                if len(p) >= 2 and (p[0] == 0xCB or p[0] == 0xCC) and p[1] == 0x01:
+                    sys.stdout.write(f"\n[Python] Received {p[0]:02X} 01: Arming flight controller\n")
                     sys.stdout.flush()
                     apm.arm()
-                elif len(p) >= 2 and p[0] == 0xCB and p[1] == 0x00:
-                    sys.stdout.write("\n[Python] Received CB 00: Disarming flight controller and setting speed to 0\n")
+                elif len(p) >= 2 and (p[0] == 0xCB or p[0] == 0xCC) and p[1] == 0x00:
+                    sys.stdout.write(f"\n[Python] Received {p[0]:02X} 00: Disarming flight controller and setting speed to 0\n")
                     sys.stdout.flush()
                     apm.disarm()
                     apm.set_speed(0, 0, 0, 0.0)
-                elif len(p) >= 2 and p[0] == 0xB1 and p[1] == 0x01:
+                elif len(p) >= 2 and (p[0] == 0xB1 or p[0] == 0xB0) and p[1] == 0x01:
                     if not PYTHON_LANDING:
-                        sys.stdout.write("\n[Python] Received B1 01: Starting speed landing (50cm/s descent)\n")
+                        sys.stdout.write(f"\n[Python] Received {p[0]:02X} 01: Starting speed landing (50cm/s descent)\n")
                         sys.stdout.flush()
                         PYTHON_LANDING = True
                 elif len(p) >= 2 and p[0] == 0xB3 and p[1] == 0x01:

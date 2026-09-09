@@ -9,18 +9,14 @@
 #include "src/config.hpp"
 #include "src/image/RgaProcessor.hpp"
 #include "src/npu/YoloEngine.hpp"
-#include "src/flight/FlightController.hpp"
 #include "src/npu/ProtocolSerializer.hpp"
 #include "src/python/PythonEngine.hpp"
-#include "src/servo/ServoController.hpp"
 
 namespace
 {
     RgaProcessor g_rgaProcessor;
     YoloEngine g_yoloEngine;
-    FlightController g_flightController;
     PythonEngine g_pythonEngine;
-    ServoController g_servoController;
 
     int getFlipAngle()
     {
@@ -94,26 +90,17 @@ extern "C" void UserAppInit(V4L2Tools::V4l2Info vinfo)
 
 extern "C" void UserAppExChange(UserAppData data)
 {
-    g_servoController.updateData(data);
-
     std::vector<std::vector<uint8_t>> broadcastPackets;
-    std::deque<std::vector<uint8_t>> recvQueue;
     if (data.getBroadcastRecv != nullptr)
     {
-        recvQueue = data.getBroadcastRecv();
-        for (const auto &packet : recvQueue)
+        auto recvQueue = data.getBroadcastRecv();
+        for (auto &packet : recvQueue)
         {
-            broadcastPackets.push_back(packet);
+            broadcastPackets.push_back(std::move(packet));
         }
     }
 
-    // 1. Process and pop incoming broadcast command messages internally
-    g_flightController.processCmd(recvQueue, data);
-
-    // 2. Telemetry and Landing state machine checks
-    g_flightController.updateState(data);
-
-    // 3. Image Preprocessing (RGA Hardware Rotation)
+    // 1. Image Preprocessing (RGA Hardware Rotation)
     int currentAngle = getFlipAngle();
     uint8_t *rotatedFrame = g_rgaProcessor.rotateFrame(data.cameraFrame, currentAngle);
 
@@ -130,15 +117,15 @@ extern "C" void UserAppExChange(UserAppData data)
         data.cameraFrame.height = finalHeight;
     }
 
-    // 4. Call Python engine loop to run Python OpenCV and handle commands
+    // 2. Call Python engine loop to run Python OpenCV and handle commands
     g_pythonEngine.execute(data, broadcastPackets);
 
-    // 5. Asynchronous NPU Detection
+    // 3. Asynchronous NPU Detection
     g_yoloEngine.detectAsync(
         rotatedFrame, finalWidth, finalHeight,
         [pushCallback = data.pushBroadcastData](const yolo_image_info_t &info)
         {
-            // 6. Broadcast YOLO Target Detections
+            // 4. Broadcast YOLO Target Detections
             ProtocolSerializer::broadcast(info, pushCallback, g_yoloEngine);
         });
 }

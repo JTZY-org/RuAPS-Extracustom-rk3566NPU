@@ -11,7 +11,6 @@ add_library(UserApp SHARED
     src/image/RgaProcessor.cpp
     src/npu/YoloEngine.cpp
     src/python/PythonEngine.cpp
-    src/servo/ServoController.cpp
 )
 
 target_compile_features(UserApp PRIVATE cxx_std_17)
@@ -59,6 +58,7 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/yolov8n.rknn"
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/coco_80_labels_list.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/user_app.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/servo_controller.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/flight_mission.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/color_detector.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/human_tracker.py"

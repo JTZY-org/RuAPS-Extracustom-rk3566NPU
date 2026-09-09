@@ -68,19 +68,34 @@ public:
                 currentAlt = *data.APMData._NAV_Relative_Pos[2];
             }
 
-            // Check if fused Z height is close to ground (less than 3 cm)
+            // Check if fused Z height is close to ground (less than 3 cm), wait 2 seconds before locking
             if (currentAlt <= 3.0)
             {
-                std::cout << "[FlightController] Ground touchdown confirmed (<3cm). Disarming and setting speed to 0...\n";
-                if (data.APMData.APMControllerDISARM)
+                if (m_lowAltStartTime == std::chrono::steady_clock::time_point{})
                 {
-                    data.APMData.APMControllerDISARM();
+                    m_lowAltStartTime = std::chrono::steady_clock::now();
                 }
-                if (data.APMData.APMControllerSpeed)
+                else
                 {
-                    data.APMData.APMControllerSpeed(0, 0, 0, 0.0f);
+                    auto elapsedSec = std::chrono::duration_cast<std::chrono::duration<double>>(std::chrono::steady_clock::now() - m_lowAltStartTime).count();
+                    if (elapsedSec >= 2.0)
+                    {
+                        if (data.APMData.APMControllerDISARM)
+                        {
+                            data.APMData.APMControllerDISARM();
+                        }
+                        if (data.APMData.APMControllerSpeed)
+                        {
+                            data.APMData.APMControllerSpeed(0, 0, 0, 0.0f);
+                        }
+                        m_state = STATE_IDLE;
+                        m_lowAltStartTime = {};
+                    }
                 }
-                m_state = STATE_IDLE;
+            }
+            else
+            {
+                m_lowAltStartTime = {};
             }
         }
     }

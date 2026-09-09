@@ -66,6 +66,10 @@ PyObject *PythonEngine::apm_DISARM(PyObject *self, PyObject *args)
     if (g_apmControllerDISARM)
     {
         g_apmControllerDISARM();
+        if (g_apmControllerSpeed)
+        {
+            g_apmControllerSpeed(0, 0, 0, 0.0f);
+        }
         Py_RETURN_NONE;
     }
     PyErr_SetString(PyExc_RuntimeError, "APMControllerDISARM pointer is null");

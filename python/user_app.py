@@ -41,9 +41,9 @@ LAST_CH12_STATE = None
 
 def check_rc_ch12_arm_disarm(telemetry: 'TelemetryData'):
     """
-    Monitors RC Channel 12 (rc_channel_raw[11]) to trigger Arm / Landing.
-    - Value >= 1700 us -> Triggers apm.arm()
-    - Value <= 1300 us -> Triggers landing logic (PYTHON_LANDING = True)
+    Monitors RC Channel 12 (rc_channel_raw[11]) to trigger Arm / Landing on edge transitions.
+    - Transition to HIGH (>= 1700 us) -> Triggers apm.arm()
+    - Transition to LOW (<= 1300 us) -> Triggers landing logic (PYTHON_LANDING = True)
     """
     global LAST_CH12_STATE, PYTHON_LANDING
     if not telemetry:
@@ -55,19 +55,22 @@ def check_rc_ch12_arm_disarm(telemetry: 'TelemetryData'):
     if ch12_val is None or ch12_val <= 0:
         return
 
-    if ch12_val >= 1700:
-        if LAST_CH12_STATE != 'HIGH':
-            LAST_CH12_STATE = 'HIGH'
+    current_state = 'HIGH' if ch12_val >= 1700 else ('LOW' if ch12_val <= 1300 else 'MID')
+
+    # Initial state recording without triggering actions
+    if LAST_CH12_STATE is None:
+        LAST_CH12_STATE = current_state
+        return
+
+    if current_state != LAST_CH12_STATE:
+        if current_state == 'HIGH':
             PYTHON_LANDING = False
-            apm.arm()
-    elif ch12_val <= 1300:
-        if LAST_CH12_STATE != 'LOW':
-            LAST_CH12_STATE = 'LOW'
-            if not PYTHON_LANDING:
+            if flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
+                apm.arm()
+        elif current_state == 'LOW':
+            if flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
                 PYTHON_LANDING = True
-    else:
-        if LAST_CH12_STATE not in ('MID', None):
-            LAST_CH12_STATE = 'MID'
+        LAST_CH12_STATE = current_state
 
 def debug_print_telemetry(telemetry: 'TelemetryData'):
     if not telemetry:
@@ -197,6 +200,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                 elif len(p) >= 2 and p[0] == 0xB3 and p[1] == 0x01:
                     sys.stdout.write("\n[Python] Received B3 01: Starting flight mission...\n")
                     sys.stdout.flush()
+                    PYTHON_LANDING = False
                     flight_mission.start_mission(telemetry)
                 elif len(p) >= 2 and p[0] == 0xB4 and p[1] == 0x01:
                     sys.stdout.write("\n[Python] Received B4 01: Starting human yaw tracking...\n")
@@ -207,19 +211,23 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
                     sys.stdout.flush()
                     human_tracker.g_human_tracker.stop_tracking()
 
-    # Process Python Landing Telemetry Verification
-    if PYTHON_LANDING:
+    # Process Python Standalone Landing (only when no mission is running)
+    if PYTHON_LANDING and flight_mission.MISSION_STATE == flight_mission.MS_IDLE:
         apm.set_speed(0, 0, 50, 0.0)
         
         nav_relative_pos = telemetry.get('nav_relative_pos') if telemetry else None
         if nav_relative_pos and len(nav_relative_pos) >= 3 and nav_relative_pos[2] is not None:
             current_alt = nav_relative_pos[2]
             if current_alt <= 3.0:
-                sys.stdout.write(f"\n[Python Landing] Alt: {current_alt:.2f} cm <= 3cm. Disarming and setting speed to 0...\n")
-                sys.stdout.flush()
-                apm.disarm()
-                apm.set_speed(0, 0, 0, 0.0)
-                PYTHON_LANDING = False
+                if PYTHON_LANDING_START_TIME is None:
+                    PYTHON_LANDING_START_TIME = start_time
+                elif start_time - PYTHON_LANDING_START_TIME >= 2.0:
+                    apm.disarm()
+                    apm.set_speed(0, 0, 0, 0.0)
+                    PYTHON_LANDING = False
+                    PYTHON_LANDING_START_TIME = None
+            else:
+                PYTHON_LANDING_START_TIME = None
 
     # Process Human Target Yaw Tracking (when not in landing or mission state)
     if telemetry and not PYTHON_LANDING and flight_mission.MISSION_STATE == flight_mission.MS_IDLE:

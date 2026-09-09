@@ -19,9 +19,10 @@ MS_LANDING_1 = "LANDING_1"
 MS_GROUND_WAIT = "GROUND_WAIT"
 MS_REARMING = "REARMING"
 MS_RETAKEOFF = "RETAKEOFF"
-MS_FLY_BACK_RIGHT = "FLY_BACK_RIGHT"
+MS_TURN_180 = "TURN_180"
+MS_FLY_RETURN_1 = "FLY_RETURN_1"
 MS_HOVER_3 = "HOVER_3"
-MS_FLY_BACK_FORWARD = "FLY_BACK_FORWARD"
+MS_FLY_RETURN_2 = "FLY_RETURN_2"
 MS_HOVER_4 = "HOVER_4"
 MS_FINAL_LANDING = "FINAL_LANDING"
 MS_DONE = "DONE"
@@ -29,13 +30,20 @@ MS_DONE = "DONE"
 MISSION_STATE = MS_IDLE
 STATE_START_TIME = 0.0
 STABILIZE_START_TIME = None
+TOUCHDOWN_START_TIME = None
+TAKEOFF_HEADING = None
+IS_STATE_FIRST_FRAME = True
 START_YAW = 0.0
 TARGET_YAW = 0.0
+YAW_RETURN_1 = 0.0
+YAW_RETURN_2 = 0.0
 LAST_ARM_TIME = 0.0
+LAST_LOG_TIME = 0.0
 MISSION_LOGS = []
 
 def set_mission_state(new_state):
-    global MISSION_STATE, STATE_START_TIME, STABILIZE_START_TIME, MISSION_LOGS, LAST_ARM_TIME
+    global MISSION_STATE, STATE_START_TIME, STABILIZE_START_TIME, TOUCHDOWN_START_TIME, TAKEOFF_HEADING
+    global IS_STATE_FIRST_FRAME, MISSION_LOGS, LAST_ARM_TIME, LAST_LOG_TIME
     log_msg = f"[MISSION] Transition: {MISSION_STATE} -> {new_state}"
     sys.stdout.write(f"\n{log_msg}\n")
     sys.stdout.flush()
@@ -45,7 +53,11 @@ def set_mission_state(new_state):
     MISSION_STATE = new_state
     STATE_START_TIME = time.perf_counter()
     STABILIZE_START_TIME = None
+    TOUCHDOWN_START_TIME = None
+    TAKEOFF_HEADING = None
+    IS_STATE_FIRST_FRAME = True
     LAST_ARM_TIME = 0.0
+    LAST_LOG_TIME = 0.0
 
 def normalize_yaw(yaw):
     while yaw > 180.0:
@@ -72,9 +84,14 @@ STABLE_ARM_STATE = False
 def get_stable_armed(telemetry: 'TelemetryData', required_frames: int = 5) -> bool:
     global ARM_CONSECUTIVE_COUNT, LAST_RAW_ARM_STATE, STABLE_ARM_STATE
     if not telemetry:
-        return STABLE_ARM_STATE
+        return False
     # sys_disarm_flag: False is ARMED, True is DISARMED
-    raw_armed = (telemetry.get('sys_disarm_flag') is False)
+    disarm_flag = telemetry.get('sys_disarm_flag')
+    if disarm_flag is None:
+        disarm_flag = telemetry.get('sys_arm_flag')
+    if disarm_flag is None:
+        return False
+    raw_armed = (disarm_flag is False)
     if raw_armed == LAST_RAW_ARM_STATE:
         ARM_CONSECUTIVE_COUNT += 1
         if ARM_CONSECUTIVE_COUNT >= required_frames:
@@ -100,13 +117,17 @@ def start_mission(telemetry: 'TelemetryData', trigger_source: str = "B3 01"):
             set_mission_state(MS_ARMING)
 
 def run_mission_state_machine(telemetry: 'TelemetryData'):
-    global MISSION_STATE, STATE_START_TIME, STABILIZE_START_TIME, START_YAW, TARGET_YAW, LAST_ARM_TIME
+    global MISSION_STATE, STATE_START_TIME, STABILIZE_START_TIME, TOUCHDOWN_START_TIME, TAKEOFF_HEADING
+    global IS_STATE_FIRST_FRAME, START_YAW, TARGET_YAW, YAW_RETURN_1, YAW_RETURN_2, LAST_ARM_TIME, LAST_LOG_TIME
+    global STABLE_ARM_STATE, LAST_RAW_ARM_STATE, ARM_CONSECUTIVE_COUNT
     
     if MISSION_STATE == MS_IDLE:
         return
         
     now = time.perf_counter()
     elapsed = now - STATE_START_TIME
+    is_first_frame = IS_STATE_FIRST_FRAME
+    IS_STATE_FIRST_FRAME = False
     
     # Get altitude
     alt = 0.0
@@ -122,21 +143,16 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
         # Check arm flag with debounce filter
         is_armed = get_stable_armed(telemetry)
         if is_armed:
-            sys.stdout.write("\n[MISSION] Arm confirmed! Transitioning to TAKEOFF...\n")
-            sys.stdout.flush()
             set_mission_state(MS_TAKEOFF)
         else:
             # Continuously pulse arm command
             apm.arm()
-            if now - LAST_ARM_TIME >= 1.0:
-                disarm_flag = telemetry.get('sys_arm_flag') if telemetry else None
-                sys.stdout.write(f"\n[MISSION] MS_ARMING: Pulsing apm.arm() (sys_arm_flag={disarm_flag})...\n")
-                sys.stdout.flush()
-                LAST_ARM_TIME = now
                 
     elif MISSION_STATE == MS_TAKEOFF:
-        # Command takeoff to Z=50cm, keeping current heading
-        apm.set_position(0, 0, 50, current_yaw, True)
+        # Lock ground heading so drone climbs straight without turning on ground
+        if TAKEOFF_HEADING is None:
+            TAKEOFF_HEADING = current_yaw
+        apm.set_position(0, 0, 50, TAKEOFF_HEADING, is_first_frame)
         
         # Check stabilization around 50cm
         if 42.0 <= alt <= 58.0:
@@ -145,6 +161,8 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             elif now - STABILIZE_START_TIME >= 1.5:
                 START_YAW = current_yaw
                 TARGET_YAW = normalize_yaw(START_YAW - 90.0)
+                YAW_RETURN_1 = normalize_yaw(TARGET_YAW + 180.0)
+                YAW_RETURN_2 = normalize_yaw(START_YAW + 180.0)
                 set_mission_state(MS_FLY_FORWARD)
         else:
             STABILIZE_START_TIME = None
@@ -157,13 +175,17 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             apm.set_speed(20, 0, 0, 0.0)
             
     elif MISSION_STATE == MS_HOVER_1:
-        # Turn to TARGET_YAW and reset home at current point (X=0, Y=0)
-        target_alt = int(alt) if alt >= 30.0 else 50
-        apm.set_position(0, 0, target_alt, TARGET_YAW, True)
+        # Turn to TARGET_YAW in the air: lock current point as origin (0,0,50) and rotate
+        apm.set_position(0, 0, 50, TARGET_YAW, is_first_frame)
         
         yaw_err = abs(normalize_yaw(current_yaw - TARGET_YAW))
-        if yaw_err < 5.0 or elapsed >= 2.0:
-            set_mission_state(MS_FLY_RIGHT)
+        if yaw_err < 3.0:
+            if STABILIZE_START_TIME is None:
+                STABILIZE_START_TIME = now
+            elif now - STABILIZE_START_TIME >= 1.0:
+                set_mission_state(MS_FLY_RIGHT)
+        else:
+            STABILIZE_START_TIME = None
             
     elif MISSION_STATE == MS_FLY_RIGHT:
         # Body has turned: fly forward along current heading at 20 cm/s for 2.0s
@@ -173,98 +195,136 @@ def run_mission_state_machine(telemetry: 'TelemetryData'):
             apm.set_speed(20, 0, 0, 0.0)
             
     elif MISSION_STATE == MS_HOVER_2:
-        # Hover for 5.0s at current position (reset home)
-        target_alt = int(alt) if alt >= 30.0 else 50
-        apm.set_position(0, 0, target_alt, TARGET_YAW, True)
+        # Hover for 5.0s at current position in the air: lock current point as origin (0,0,50)
+        apm.set_position(0, 0, 50, TARGET_YAW, is_first_frame)
         if elapsed >= 5.0:
             set_mission_state(MS_LANDING_1)
             
     elif MISSION_STATE == MS_LANDING_1:
-        # Land in place at 50 cm/s descent
+        # Land in place at 50 cm/s descent, wait 2 seconds after reaching <= 3cm before locking
         if alt <= 3.0:
-            sys.stdout.write(f"\n[MISSION] Touchdown confirmed (alt={alt:.1f}cm <= 3cm). Disarming, setting speed to 0 and resetting Home...\n")
-            sys.stdout.flush()
-            apm.disarm()
-            apm.set_speed(0, 0, 0, 0.0)
-            apm.set_position(0, 0, 0, TARGET_YAW, True)
-            set_mission_state(MS_GROUND_WAIT)
+            if TOUCHDOWN_START_TIME is None:
+                TOUCHDOWN_START_TIME = now
+            elif now - TOUCHDOWN_START_TIME >= 2.0:
+                apm.disarm()
+                apm.set_speed(0, 0, 0, 0.0)
+                STABLE_ARM_STATE = False
+                LAST_RAW_ARM_STATE = False
+                ARM_CONSECUTIVE_COUNT = 0
+                set_mission_state(MS_GROUND_WAIT)
+        elif elapsed >= 3.0 and alt <= 15.0:
+            # Fallback timeout if ground sensor stays between 3-15cm
+            if TOUCHDOWN_START_TIME is None:
+                TOUCHDOWN_START_TIME = now
+            elif now - TOUCHDOWN_START_TIME >= 2.0:
+                apm.disarm()
+                apm.set_speed(0, 0, 0, 0.0)
+                STABLE_ARM_STATE = False
+                LAST_RAW_ARM_STATE = False
+                ARM_CONSECUTIVE_COUNT = 0
+                set_mission_state(MS_GROUND_WAIT)
         else:
+            TOUCHDOWN_START_TIME = None
+
+        if MISSION_STATE == MS_LANDING_1:
             apm.set_speed(0, 0, 50, 0.0)
             
     elif MISSION_STATE == MS_GROUND_WAIT:
         # Wait on ground for 5.0s
-        apm.set_speed(0, 0, 0, 0.0)
         if elapsed >= 5.0:
             set_mission_state(MS_REARMING)
             
     elif MISSION_STATE == MS_REARMING:
-        # Arm again with debounce filter
+        # Check actual arm flag from telemetry
         is_armed = get_stable_armed(telemetry)
         if is_armed:
-            sys.stdout.write("\n[MISSION] Re-arm confirmed! Transitioning to RETAKEOFF...\n")
-            sys.stdout.flush()
             set_mission_state(MS_RETAKEOFF)
         else:
-            # Continuously pulse arm command on ground
+            # Pulse arm command on ground to trigger takeoff
             apm.arm()
-            if now - LAST_ARM_TIME >= 1.0:
-                disarm_flag = telemetry.get('sys_disarm_flag') if telemetry else None
-                sys.stdout.write(f"\n[MISSION] MS_REARMING: Pulsing apm.arm() (sys_disarm_flag={disarm_flag}, alt={alt:.1f}cm)...\n")
-                sys.stdout.flush()
-                LAST_ARM_TIME = now
                 
     elif MISSION_STATE == MS_RETAKEOFF:
-        # Takeoff again to 50cm
-        apm.set_position(0, 0, 50, TARGET_YAW, True)
+        # Lock ground heading during retakeoff so it climbs straight without rotating on ground
+        if TAKEOFF_HEADING is None:
+            TAKEOFF_HEADING = current_yaw
+        apm.arm()
+        apm.set_position(0, 0, 50, TAKEOFF_HEADING, is_first_frame)
         
         # Check stabilization around 50cm
         if 42.0 <= alt <= 58.0:
             if STABILIZE_START_TIME is None:
                 STABILIZE_START_TIME = now
             elif now - STABILIZE_START_TIME >= 1.5:
-                set_mission_state(MS_FLY_BACK_RIGHT)
+                set_mission_state(MS_TURN_180)
         else:
             STABILIZE_START_TIME = None
             
-    elif MISSION_STATE == MS_FLY_BACK_RIGHT:
-        # Fly backward along current body axis at -20 cm/s for 2.0s
+    elif MISSION_STATE == MS_TURN_180:
+        # Turn 180 degrees in the air to face back towards Corner 1
+        apm.set_position(0, 0, 50, YAW_RETURN_1, is_first_frame)
+        
+        yaw_err = abs(normalize_yaw(current_yaw - YAW_RETURN_1))
+        if yaw_err < 3.0:
+            if STABILIZE_START_TIME is None:
+                STABILIZE_START_TIME = now
+            elif now - STABILIZE_START_TIME >= 1.0:
+                set_mission_state(MS_FLY_RETURN_1)
+        else:
+            STABILIZE_START_TIME = None
+            
+    elif MISSION_STATE == MS_FLY_RETURN_1:
+        # Fly FORWARD in body frame at 20 cm/s for 2.0s back to Corner 1
         if elapsed >= 2.0:
             set_mission_state(MS_HOVER_3)
         else:
-            apm.set_speed(-20, 0, 0, 0.0)
+            apm.set_speed(20, 0, 0, 0.0)
             
     elif MISSION_STATE == MS_HOVER_3:
-        # Turn back to START_YAW and reset home at current point (X=0, Y=0)
-        target_alt = int(alt) if alt >= 30.0 else 50
-        apm.set_position(0, 0, target_alt, START_YAW, True)
+        # Turn at Corner 1 to face Home (YAW_RETURN_2)
+        apm.set_position(0, 0, 50, YAW_RETURN_2, is_first_frame)
         
-        yaw_err = abs(normalize_yaw(current_yaw - START_YAW))
-        if yaw_err < 5.0 or elapsed >= 2.0:
-            set_mission_state(MS_FLY_BACK_FORWARD)
+        yaw_err = abs(normalize_yaw(current_yaw - YAW_RETURN_2))
+        if yaw_err < 3.0:
+            if STABILIZE_START_TIME is None:
+                STABILIZE_START_TIME = now
+            elif now - STABILIZE_START_TIME >= 1.0:
+                set_mission_state(MS_FLY_RETURN_2)
+        else:
+            STABILIZE_START_TIME = None
             
-    elif MISSION_STATE == MS_FLY_BACK_FORWARD:
-        # Fly backward along initial body axis at -20 cm/s for 2.0s
+    elif MISSION_STATE == MS_FLY_RETURN_2:
+        # Fly FORWARD in body frame at 20 cm/s for 2.0s back to Home
         if elapsed >= 2.0:
             set_mission_state(MS_HOVER_4)
         else:
-            apm.set_speed(-20, 0, 0, 0.0)
+            apm.set_speed(20, 0, 0, 0.0)
             
     elif MISSION_STATE == MS_HOVER_4:
-        # Hover for 1.0s at current position (reset home)
-        target_alt = int(alt) if alt >= 30.0 else 50
-        apm.set_position(0, 0, target_alt, START_YAW, True)
-        if elapsed >= 1.0:
+        # Hover for 1.5s at current position in the air before final landing
+        apm.set_position(0, 0, 50, YAW_RETURN_2, is_first_frame)
+        if elapsed >= 1.5:
             set_mission_state(MS_FINAL_LANDING)
             
     elif MISSION_STATE == MS_FINAL_LANDING:
-        # Land in place at 50 cm/s
+        # Land in place at 50 cm/s, wait 2 seconds after reaching <= 3cm before locking
         if alt <= 3.0:
-            sys.stdout.write(f"\n[MISSION] Final Touchdown confirmed (alt={alt:.1f}cm <= 3cm). Disarming and setting speed to 0...\n")
-            sys.stdout.flush()
-            apm.disarm()
-            apm.set_speed(0, 0, 0, 0.0)
-            set_mission_state(MS_DONE)
+            if TOUCHDOWN_START_TIME is None:
+                TOUCHDOWN_START_TIME = now
+            elif now - TOUCHDOWN_START_TIME >= 2.0:
+                apm.disarm()
+                apm.set_speed(0, 0, 0, 0.0)
+                set_mission_state(MS_DONE)
+        elif elapsed >= 3.0 and alt <= 15.0:
+            if TOUCHDOWN_START_TIME is None:
+                TOUCHDOWN_START_TIME = now
+            elif now - TOUCHDOWN_START_TIME >= 2.0:
+                apm.disarm()
+                apm.set_speed(0, 0, 0, 0.0)
+                set_mission_state(MS_DONE)
         else:
+            TOUCHDOWN_START_TIME = None
+
+        if MISSION_STATE == MS_FINAL_LANDING:
             apm.set_speed(0, 0, 50, 0.0)
             
     elif MISSION_STATE == MS_DONE:

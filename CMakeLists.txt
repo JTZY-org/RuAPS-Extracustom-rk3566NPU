@@ -58,10 +58,9 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/yolov8n.rknn"
     "${CMAKE_CURRENT_SOURCE_DIR}/Thirdparty/model/coco_80_labels_list.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/user_app.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/protocol.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/servo_controller.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/python/flight_mission.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/color_detector.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/python/human_tracker.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/python/apm.pyi"
     DESTINATION etc/rknn
 )

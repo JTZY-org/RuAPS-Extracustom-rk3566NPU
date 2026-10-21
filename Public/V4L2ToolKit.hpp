@@ -32,6 +32,8 @@ namespace V4L2Tools
         v4l2_memory V4L2OUT_TYPE = V4L2_MEMORY_USERPTR;
         bool IsDMABuffSupport = false;
         // H264 camera codec control
+        // Layout must match RuAPM_Cli host V4l2Info (AArch64 by-value => ptr;
+        // host copies 64 bytes into the UserAppInit temporary).
         int H264_PSize = 60;
         int H264_Profile = 0;
         int H264_VidQB = 35;

@@ -2,3 +2,13 @@
 **/.antigravitycli/**
 **/__pycache__/**
 *.pyc
+
+# 打包产物、参考压缩包、临时交付目录不进仓库
+*.deb
+*.zip
+linshi/
+
+# 本地笔记和 Cursor 规则，只留在本机
+change.md
+run.md
+.cursor/

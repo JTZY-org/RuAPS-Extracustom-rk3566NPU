@@ -10,6 +10,7 @@
 
 #include <mutex>
 #include "SortTracker.hpp"
+#include "TrackFeedbackRelay.hpp"
 
 struct TrackedBox
 {
@@ -135,5 +136,9 @@ public:
             currentTracks.push_back(tb);
         }
         setLatestDetections(currentTracks);
+
+        // 本回调里的 0xFE 已经全部推完。再补一次 Python 的 0xFD 0x01，
+        // 保证检测框还在跳的时候，跟踪回传仍是最后一包。
+        TrackFeedbackRelay::replayAfterDetections(pushCallback);
     }
 };

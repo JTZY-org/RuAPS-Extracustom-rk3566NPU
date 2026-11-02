@@ -1,15 +1,44 @@
 # /etc/rknn/user_app.py
 from __future__ import annotations
+import sys
+
+
+def _ensure_utf8_stdio() -> None:
+    """机端 locale 经常是 C/POSIX，stdout 编码就是 ascii。中文 write 会抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or getattr(stream, "encoding", None) == "utf-8":
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            # backslashreplace：个别字节写不出去时打成转义，不再把飞控循环打崩。
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, OSError, ValueError):
+            continue
+
+
+# 宿主可能在 import 之后才接上 stdout，exchange / init 里还会再调一次。
+_ensure_utf8_stdio()
+
 import math
 import struct
-import sys
 import time
 from typing import TYPE_CHECKING, Optional, List, Tuple
 
 import apm
 import color_detector
 import servo_controller
-from protocol import CmdID, FMT_ARM, FMT_LAND, FMT_POS_REL_HORIZ, FMT_POS_VERT, FMT_GIMBAL_CONTROL
+import vcm_controller
+from protocol import (
+    CmdID,
+    FMT_ARM,
+    FMT_LAND,
+    FMT_POS_REL_HORIZ,
+    FMT_POS_VERT,
+    FMT_GIMBAL_CONTROL,
+    FMT_VCM_FOCUS,
+)
 
 if TYPE_CHECKING:
     from apm import TelemetryData
@@ -77,6 +106,15 @@ TRACK_RANGE_DEADZONE_PX = 16
 TRACK_RANGE_X_SIGN = -1
 RANGE_FEEDBACK_FMT = "<BBBhhHH"  # 11 字节，小端。0xFD 0x03
 
+# ------------------------------------------------------------------------------
+# OV5695 + DW9714 VCM。I2C /dev/i2c-4 @ 0x0C。DAC 0~1023。
+# user_app 起来后固定无限远，并用非 0 偏置电流加力锁镜（不要写 DAC 0）。
+# 上锁/解锁都不泄力。地面站 D5 + int16 可临时改；负数回到无限远锁点。
+# ------------------------------------------------------------------------------
+VCM_ENABLED = True
+VCM_INFINITY_DAC = vcm_controller.DEFAULT_INFINITY_DAC
+VCM_CRUISE_DAC = VCM_INFINITY_DAC  # 兼容旧名
+
 # 固定自动化：万向节实验箱。位移/高度/降落/云台在这个模式下丢掉。
 # 油门是 PWM μs。头文件只提供 APMControllerServo(pin, PWM)，没有写电机在哪些 pin。
 # 云台占用 pin 4。FIXED_MOTOR_PINS 为空时只记状态，不调用 set_servo。
@@ -121,7 +159,11 @@ def init(width: int, height: int, pixfmt: int) -> int:
     :param height: Image height
     :param pixfmt: Image pixel format (V4L2 format code)
     """
+    _ensure_utf8_stdio()
     print(f"[Python] init() called: width={width}, height={height}, pixfmt={pixfmt}")
+    if VCM_ENABLED:
+        # 启动即无限远 + 加力锁镜，之后上锁也不泄到 DAC 0。
+        _vcm_hold_infinity("init")
     return 0
 
 
@@ -491,6 +533,57 @@ def _stop_person_track(reason: str, always_zero_speed: bool) -> None:
         sys.stdout.flush()
 
 
+def _vcm_hold_infinity(reason: str) -> None:
+    """无限远 + 偏置电流加力锁镜。失败只打日志，不抛回 exchange。"""
+    if not VCM_ENABLED:
+        return
+    vcm_controller.g_vcm_controller.cruise_dac = int(VCM_INFINITY_DAC)
+    ok = vcm_controller.g_vcm_controller.apply_infinity_lock(smooth=True)
+    rb = vcm_controller.g_vcm_controller.get_focus() if ok else None
+    msg = f"[Python] VCM infinity-lock ({reason}) DAC={VCM_INFINITY_DAC}"
+    if rb is not None:
+        msg += f" readback={rb}"
+    if not ok:
+        msg += " failed"
+    # init 里可能还在用 print；exchange 路径用 stdout。
+    try:
+        sys.stdout.write("\n" + msg + "\n")
+        sys.stdout.flush()
+    except Exception:
+        print(msg)
+
+
+def _vcm_hold_cruise(reason: str) -> None:
+    """兼容旧调用名，等同无限远加力锁。"""
+    _vcm_hold_infinity(reason)
+
+
+def _try_apply_vcm_focus(packet: bytes) -> bool:
+    """D5 + int16。dac>=0 写绝对位置；负数回到无限远锁点。"""
+    size = struct.calcsize(FMT_VCM_FOCUS)
+    if len(packet) < size:
+        return False
+    cmd, dac = struct.unpack(FMT_VCM_FOCUS, packet[:size])
+    if cmd != CmdID.VCM_FOCUS:
+        return False
+    if not VCM_ENABLED:
+        sys.stdout.write("\n[Python] VCM ignored: VCM_ENABLED is False\n")
+        sys.stdout.flush()
+        return True
+    if dac < 0:
+        _vcm_hold_infinity("D5 infinity")
+        return True
+    ok = vcm_controller.g_vcm_controller.set_focus_smooth(int(dac))
+    rb = vcm_controller.g_vcm_controller.get_focus()
+    sys.stdout.write(
+        f"\n[Python] VCM D5 set DAC={int(dac)}"
+        + (f" readback={rb}" if rb is not None else "")
+        + (" ok\n" if ok else " failed\n")
+    )
+    sys.stdout.flush()
+    return True
+
+
 def _stop_track_if_just_locked(telemetry: Optional['TelemetryData']) -> None:
     """RC 上锁不一定有 CB/CC 包。只在解锁变成上锁的这一拍停跟踪。"""
     global LAST_DISARM_FLAG
@@ -506,6 +599,10 @@ def _stop_track_if_just_locked(telemetry: Optional['TelemetryData']) -> None:
         _stop_range_hold("disarm flag", always_zero_speed=True)
         if FIXED_MODE:
             _release_fixed_throttle()
+        # 上锁仍保持无限远加力锁，不写 DAC 0。
+        _vcm_hold_infinity("disarm flag")
+    elif LAST_DISARM_FLAG is True and not locked:
+        _vcm_hold_infinity("arm flag")
     LAST_DISARM_FLAG = locked
 
 
@@ -1016,6 +1113,7 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
                     sys.stdout.flush()
                     apm.arm()
                     _begin_fixed_throttle_ramp()
+                    _vcm_hold_infinity("arm cmd")
                 elif action == 0:
                     sys.stdout.write(f"\n[Python] Received {cmd_id:02X} 00: Disarming flight controller and setting speed to 0\n")
                     sys.stdout.flush()
@@ -1026,6 +1124,8 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
                     _stop_range_hold("disarm cmd", always_zero_speed=True)
                     if FIXED_MODE:
                         _release_fixed_throttle()
+                    # 上锁仍保持无限远加力锁，不泄到 DAC 0。
+                    _vcm_hold_infinity("disarm cmd")
 
         # 2. Standalone Speed Landing (B0 / B1)
         elif cmd_id in (CmdID.LAND, CmdID.LAND_ALT):
@@ -1167,6 +1267,10 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
             else:
                 sys.stdout.write(f"\n[Python] D4 toggle ignored: raw={p.hex()}\n")
                 sys.stdout.flush()
+        elif cmd_id == CmdID.VCM_FOCUS:
+            if not _try_apply_vcm_focus(p):
+                sys.stdout.write(f"\n[Python] D5 packet too short: len={len(p)} raw={p.hex()}\n")
+                sys.stdout.flush()
         elif cmd_id == CmdID.FIXED_BOX and len(p) == 2:
             # 实机飞行跟踪没有固定自动化。E0 不进模式，1000→1200 油门斜坡也不会启动。
             sys.stdout.write(
@@ -1256,6 +1360,8 @@ def process_landing(telemetry: Optional['TelemetryData'], current_time: float) -
 def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry: 'TelemetryData') -> int:
     global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, INITIAL_STATUS_CHECKED
     global LAST_FRAME_WIDTH, LAST_FRAME_HEIGHT
+    # 宿主可能在模块导入之后才把 stdout 接成 ascii。编码已经是 utf-8 时这里只看一眼。
+    _ensure_utf8_stdio()
     start_time = time.perf_counter()
     if width and width > 0:
         LAST_FRAME_WIDTH = int(width)
@@ -1298,7 +1404,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         # 7. Landing state machine
         process_landing(telemetry, start_time)
 
-    # 7b. 人物跟踪。降落已经在上面把跟踪关掉，避免下降速度被这一拍盖掉。
+    # 7. 人物跟踪。降落已经在上面把跟踪关掉，避免下降速度被这一拍盖掉。
     # 框和这里的 width/height 是同一套旋转后的画面。偏航和平移二选一。
     if PERSON_TRACK_ENABLED:
         process_person_track(width, telemetry)

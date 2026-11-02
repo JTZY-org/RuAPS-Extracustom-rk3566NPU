@@ -20,6 +20,8 @@ class CmdID(IntEnum):
     FLIGHT_FOLLOW = 0xD3
     # len==2：后退模式。01 开启，00 关闭。偏航跟踪和平移跟踪共用，看行人框大小写速度 x。
     RANGE_HOLD = 0xD4
+    # len==3：VCM 对焦。int16 dac 0~1023；负数表示回到巡航 DAC。
+    VCM_FOCUS = 0xD5
     GIMBAL_CONTROL = 0xFB  # Ground-station servo/laser CONTROLDATA (Flutter)
     FIXED_BOX = 0xE0       # len==2 kept for old packets. Flight follow ignores it; mode stays off.
 
@@ -40,3 +42,6 @@ FMT_POS_VERT = "<Bh"
 
 # Flutter / COM CONTROLDATA_t: reverse(u8) + Mark(0xFB) + servo(u16) + laser(u16)
 FMT_GIMBAL_CONTROL = "<BBHH"
+
+# VCM：uint8 cmd(0xD5), int16 dac（0~1023；负数=巡航）
+FMT_VCM_FOCUS = "<Bh"

@@ -108,12 +108,27 @@ RANGE_FEEDBACK_FMT = "<BBBhhHH"  # 11 字节，小端。0xFD 0x03
 
 # ------------------------------------------------------------------------------
 # OV5695 + DW9714 VCM。I2C /dev/i2c-4 @ 0x0C。DAC 0~1023。
-# user_app 起来后固定无限远，并用非 0 偏置电流加力锁镜（不要写 DAC 0）。
-# 上锁/解锁都不泄力。地面站 D5 + int16 可临时改；负数回到无限远锁点。
+# 开机扫描：图传起来后约 3s 一次——拉远(0)→拉近(1023)→锁无限远(280)。
+# 扫描在 exchange 里跑（不堵 init）；飞巡航锁 280。上锁/解锁不泄力。
+# 地面站 D5 + int16 可临时改；负数回到无限远锁点。
 # ------------------------------------------------------------------------------
 VCM_ENABLED = True
 VCM_INFINITY_DAC = vcm_controller.DEFAULT_INFINITY_DAC
 VCM_CRUISE_DAC = VCM_INFINITY_DAC  # 兼容旧名
+VCM_BOOT_FAR_DAC = vcm_controller.DEFAULT_BOOT_FAR_DAC      # 拉远
+VCM_BOOT_NEAR_DAC = vcm_controller.DEFAULT_BOOT_NEAR_DAC    # 拉近
+VCM_BOOT_STEP = vcm_controller.DEFAULT_BOOT_SCAN_STEP
+VCM_BOOT_STEP_INTERVAL_S = vcm_controller.DEFAULT_BOOT_STEP_INTERVAL_S
+VCM_BOOT_HOLD_S = vcm_controller.DEFAULT_BOOT_HOLD_S
+VCM_BOOT_START_DELAY_S = vcm_controller.DEFAULT_BOOT_START_DELAY_S
+VCM_BOOT_SCAN_LOOP = False  # 开机只扫一轮
+# 开机扫描状态机：None 未开始；字符串为阶段；"done" 结束
+_VCM_BOOT_PHASE = None
+_VCM_BOOT_PHASE_T0 = 0.0
+_VCM_BOOT_NEXT_STEP_T = 0.0
+_VCM_BOOT_CUR = None
+_VCM_BOOT_LOOP_N = 0
+_VCM_BOOT_SCAN_T0 = 0.0
 
 # 固定自动化：万向节实验箱。位移/高度/降落/云台在这个模式下丢掉。
 # 油门是 PWM μs。头文件只提供 APMControllerServo(pin, PWM)，没有写电机在哪些 pin。
@@ -159,11 +174,17 @@ def init(width: int, height: int, pixfmt: int) -> int:
     :param height: Image height
     :param pixfmt: Image pixel format (V4L2 format code)
     """
+    global _VCM_BOOT_PHASE
     _ensure_utf8_stdio()
     print(f"[Python] init() called: width={width}, height={height}, pixfmt={pixfmt}")
     if VCM_ENABLED:
-        # 启动即无限远 + 加力锁镜，之后上锁也不泄到 DAC 0。
-        _vcm_hold_infinity("init")
+        # init 只挂起扫描：等 exchange/图传起来再扫，观感才和对控制台一样。
+        vcm_controller.g_vcm_controller.cruise_dac = int(VCM_INFINITY_DAC)
+        _VCM_BOOT_PHASE = "pending"
+        print(
+            f"[Python] VCM boot-scan armed: far={VCM_BOOT_FAR_DAC} "
+            f"near={VCM_BOOT_NEAR_DAC} lock={VCM_INFINITY_DAC} (wait exchange)"
+        )
     return 0
 
 
@@ -533,6 +554,119 @@ def _stop_person_track(reason: str, always_zero_speed: bool) -> None:
         sys.stdout.flush()
 
 
+def _vcm_log(msg: str) -> None:
+    """VCM 日志：init / exchange 都能写。"""
+    try:
+        sys.stdout.write("\n" + msg + "\n")
+        sys.stdout.flush()
+    except Exception:
+        print(msg)
+
+
+def _vcm_boot_scan_tick() -> None:
+    """
+    图传帧回调里推进开机扫描：约 3s 拉远→拉近→锁无限远（只一轮）。
+    """
+    global _VCM_BOOT_PHASE, _VCM_BOOT_PHASE_T0, _VCM_BOOT_NEXT_STEP_T
+    global _VCM_BOOT_CUR, _VCM_BOOT_LOOP_N, _VCM_BOOT_SCAN_T0
+    if not VCM_ENABLED or _VCM_BOOT_PHASE is None or _VCM_BOOT_PHASE == "done":
+        return
+
+    now = time.monotonic()
+    vcm = vcm_controller.g_vcm_controller
+    step = max(1, int(VCM_BOOT_STEP))
+    interval = float(VCM_BOOT_STEP_INTERVAL_S)
+    hold_s = float(VCM_BOOT_HOLD_S)
+    start_delay = float(VCM_BOOT_START_DELAY_S)
+
+    def _write(dac: int) -> bool:
+        global _VCM_BOOT_CUR
+        ok = vcm.set_focus(int(dac))
+        if ok:
+            _VCM_BOOT_CUR = int(dac)
+        return ok
+
+    def _step_toward(target: int) -> bool:
+        """True 表示已到达 target。"""
+        global _VCM_BOOT_NEXT_STEP_T, _VCM_BOOT_CUR
+        if _VCM_BOOT_CUR is None:
+            rb = vcm.get_focus()
+            _VCM_BOOT_CUR = int(rb) if rb is not None else int(VCM_INFINITY_DAC)
+        if now < _VCM_BOOT_NEXT_STEP_T:
+            return _VCM_BOOT_CUR == int(target)
+        if _VCM_BOOT_CUR == int(target):
+            return True
+        if _VCM_BOOT_CUR < target:
+            nxt = min(int(target), _VCM_BOOT_CUR + step)
+        else:
+            nxt = max(int(target), _VCM_BOOT_CUR - step)
+        _write(nxt)
+        _VCM_BOOT_NEXT_STEP_T = now + interval
+        return nxt == int(target)
+
+    if _VCM_BOOT_PHASE == "pending":
+        _VCM_BOOT_PHASE = "delay"
+        _VCM_BOOT_PHASE_T0 = now
+        _vcm_log(
+            f"[Python] VCM boot-scan armed ~{vcm_controller.DEFAULT_BOOT_SCAN_S:.1f}s "
+            f"far={VCM_BOOT_FAR_DAC} near={VCM_BOOT_NEAR_DAC} lock={VCM_INFINITY_DAC}"
+        )
+        return
+
+    if _VCM_BOOT_PHASE == "delay":
+        if now - _VCM_BOOT_PHASE_T0 < start_delay:
+            return
+        _VCM_BOOT_LOOP_N = 1
+        _VCM_BOOT_SCAN_T0 = now
+        _vcm_log(
+            f"[Python] VCM boot-scan start "
+            f"far={VCM_BOOT_FAR_DAC} near={VCM_BOOT_NEAR_DAC} lock={VCM_INFINITY_DAC}"
+        )
+        _VCM_BOOT_PHASE = "to_far"
+        _VCM_BOOT_NEXT_STEP_T = 0.0
+        return
+
+    if _VCM_BOOT_PHASE == "to_far":
+        if _step_toward(int(VCM_BOOT_FAR_DAC)):
+            rb = vcm.get_focus()
+            _vcm_log(f"[Python] VCM boot-scan far target={VCM_BOOT_FAR_DAC} readback={rb}")
+            _VCM_BOOT_PHASE = "hold_far"
+            _VCM_BOOT_PHASE_T0 = now
+        return
+
+    if _VCM_BOOT_PHASE == "hold_far":
+        if now - _VCM_BOOT_PHASE_T0 >= hold_s:
+            _VCM_BOOT_PHASE = "to_near"
+            _VCM_BOOT_NEXT_STEP_T = 0.0
+        return
+
+    if _VCM_BOOT_PHASE == "to_near":
+        if _step_toward(int(VCM_BOOT_NEAR_DAC)):
+            rb = vcm.get_focus()
+            _vcm_log(f"[Python] VCM boot-scan near target={VCM_BOOT_NEAR_DAC} readback={rb}")
+            _VCM_BOOT_PHASE = "hold_near"
+            _VCM_BOOT_PHASE_T0 = now
+        return
+
+    if _VCM_BOOT_PHASE == "hold_near":
+        if now - _VCM_BOOT_PHASE_T0 >= hold_s:
+            _VCM_BOOT_PHASE = "to_lock"
+            _VCM_BOOT_NEXT_STEP_T = 0.0
+        return
+
+    if _VCM_BOOT_PHASE == "to_lock":
+        if _step_toward(int(VCM_INFINITY_DAC)):
+            rb = vcm.get_focus()
+            vcm.cruise_dac = int(VCM_INFINITY_DAC)
+            elapsed = now - _VCM_BOOT_SCAN_T0 if _VCM_BOOT_SCAN_T0 else 0.0
+            _vcm_log(
+                f"[Python] VCM boot-scan done {elapsed:.2f}s "
+                f"lock={VCM_INFINITY_DAC} readback={rb}"
+            )
+            _VCM_BOOT_PHASE = "done"
+        return
+
+
 def _vcm_hold_infinity(reason: str) -> None:
     """无限远 + 偏置电流加力锁镜。失败只打日志，不抛回 exchange。"""
     if not VCM_ENABLED:
@@ -545,12 +679,7 @@ def _vcm_hold_infinity(reason: str) -> None:
         msg += f" readback={rb}"
     if not ok:
         msg += " failed"
-    # init 里可能还在用 print；exchange 路径用 stdout。
-    try:
-        sys.stdout.write("\n" + msg + "\n")
-        sys.stdout.flush()
-    except Exception:
-        print(msg)
+    _vcm_log(msg)
 
 
 def _vcm_hold_cruise(reason: str) -> None:
@@ -1367,6 +1496,9 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         LAST_FRAME_WIDTH = int(width)
     if height and height > 0:
         LAST_FRAME_HEIGHT = int(height)
+
+    # 0. 图传已在跑：按控制台方式推进开机拉远/拉近扫描（不阻塞 init）
+    _vcm_boot_scan_tick()
 
     # 1. Calling interval & FPS measurement
     if LAST_CALL_TIME is not None:

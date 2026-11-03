@@ -26,6 +26,16 @@ DAC_MAX = 1023
 DEFAULT_INFINITY_DAC = 280
 # 旧名保留，避免别处引用断开。
 DEFAULT_CRUISE_DAC = DEFAULT_INFINITY_DAC
+# 开机扫描：远端 0、近端 1023，结束后锁无限远偏置（DEFAULT_INFINITY_DAC）。
+# 整段约 3s：拉远→拉近→锁无限远；飞行中不要长期停在 DAC 0。
+DEFAULT_BOOT_FAR_DAC = 0
+DEFAULT_BOOT_NEAR_DAC = 1023
+DEFAULT_BOOT_SCAN_S = 3.0
+DEFAULT_BOOT_SCAN_STEP = 80
+DEFAULT_BOOT_STEP_INTERVAL_S = 0.02
+# 端点各停约 0.9s，整段实测接近 3s（含移动）。
+DEFAULT_BOOT_HOLD_S = 0.9
+DEFAULT_BOOT_START_DELAY_S = 0.2
 
 
 class VcmController:
@@ -149,6 +159,25 @@ class VcmController:
             if current != target and delay_s > 0:
                 time.sleep(delay_s)
         return ok
+
+    def _smooth_to_timed(
+        self,
+        dac: int,
+        duration_s: float,
+        step: int = DEFAULT_BOOT_SCAN_STEP,
+    ) -> bool:
+        """在约 duration_s 内平滑走到目标 DAC（按路程均分 sleep）。"""
+        target = self._clamp(dac)
+        current = self._last_dac
+        if current is None:
+            rb = self.get_focus()
+            current = rb if rb is not None else DAC_MIN
+        if step <= 0:
+            step = DEFAULT_BOOT_SCAN_STEP
+        delta = abs(target - int(current))
+        n_steps = max(1, (delta + step - 1) // step)
+        delay_s = max(0.0, float(duration_s) / float(n_steps))
+        return self.set_focus_smooth(target, step=step, delay_s=delay_s)
 
     def apply_cruise(self, smooth: bool = True) -> bool:
         """保持无限远偏置电流，加力锁住镜头。"""

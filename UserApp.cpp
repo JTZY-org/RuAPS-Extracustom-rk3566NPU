@@ -117,10 +117,10 @@ extern "C" void UserAppExChange(UserAppData data)
         data.cameraFrame.height = finalHeight;
     }
 
-    // 2. Python 先跑。人物跟踪若开着，会在这里 push 0xFD 0x01。
+    // 2. Run Python first. Person track may push 0xFD 0x01 here when enabled.
     g_pythonEngine.execute(data, broadcastPackets);
 
-    // 3. NPU 异步检测。回调里先推 0xFE，再把上面那包 FD 补推一次，避免 FD 被盖掉。
+    // 3. NPU async detect. Callback pushes 0xFE first, then re-pushes the FD so it is not overwritten.
     g_yoloEngine.detectAsync(
         rotatedFrame, finalWidth, finalHeight,
         [pushCallback = data.pushBroadcastData](const yolo_image_info_t &info)

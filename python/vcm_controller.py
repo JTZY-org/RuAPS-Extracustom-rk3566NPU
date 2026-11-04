@@ -1,11 +1,12 @@
 # /etc/rknn/vcm_controller.py
 """
-OV5695 配套 DW9714 音圈对焦（VCM）。
-总线 /dev/i2c-4，7 位地址 0x0C，10-bit DAC（0~1023）。
-协议与 linshi/package 里的 VCM_CONTROL_GUIDE 一致。
+OV5695 companion DW9714 voice-coil focus (VCM).
+Bus /dev/i2c-4, 7-bit address 0x0C, 10-bit DAC (0~1023).
+Protocol matches VCM_CONTROL_GUIDE under linshi/package.
 
-无限远不能写 DAC 0：0 是弹簧自然位、线圈断电，镜组失去电磁刚度。
-无限远要用 200~350 一带的偏置电流把镜头锁住（electromagnetic clamp）。
+Do not write DAC 0 for infinity: 0 is the spring rest / coil-off position and
+the lens loses electromagnetic stiffness. Infinity needs a bias current in the
+200~350 band to clamp the lens (electromagnetic clamp).
 """
 from __future__ import annotations
 
@@ -15,25 +16,25 @@ import sys
 import time
 from typing import Optional
 
-# Linux i2c-dev：强制占用从机地址（内核驱动可能已绑这个地址）。
+# Linux i2c-dev: force claim the slave address (a kernel driver may already bind it).
 I2C_SLAVE_FORCE = 0x0706
 
 DEFAULT_I2C_DEV = "/dev/i2c-4"
 DEFAULT_SLAVE_ADDR = 0x0C
 DAC_MIN = 0
 DAC_MAX = 1023
-# 无限远 + 加力锁镜：指南标定区间 200~350。不要用 0。
+# Infinity + force-lock: guide-calibrated band 200~350. Do not use 0.
 DEFAULT_INFINITY_DAC = 280
-# 旧名保留，避免别处引用断开。
+# Keep old name so other call sites do not break.
 DEFAULT_CRUISE_DAC = DEFAULT_INFINITY_DAC
-# 开机扫描：远端 0、近端 1023，结束后锁无限远偏置（DEFAULT_INFINITY_DAC）。
-# 整段约 3s：拉远→拉近→锁无限远；飞行中不要长期停在 DAC 0。
+# Boot scan: far 0, near 1023, then lock infinity bias (DEFAULT_INFINITY_DAC).
+# Whole sequence ~3s: far -> near -> infinity lock; do not linger at DAC 0 in flight.
 DEFAULT_BOOT_FAR_DAC = 0
 DEFAULT_BOOT_NEAR_DAC = 1023
 DEFAULT_BOOT_SCAN_S = 3.0
 DEFAULT_BOOT_SCAN_STEP = 80
 DEFAULT_BOOT_STEP_INTERVAL_S = 0.02
-# 端点各停约 0.9s，整段实测接近 3s（含移动）。
+# Hold ~0.9s at each end; measured total near 3s including motion.
 DEFAULT_BOOT_HOLD_S = 0.9
 DEFAULT_BOOT_START_DELAY_S = 0.2
 
@@ -47,7 +48,7 @@ class VcmController:
     ) -> None:
         self.i2c_dev = i2c_dev
         self.slave_addr = int(slave_addr) & 0x7F
-        # cruise_dac：无限远加力锁位点（非 0）。
+        # cruise_dac: infinity force-lock setpoint (not 0).
         self.cruise_dac = self._clamp(cruise_dac)
         self._fd: int = -1
         self._last_dac: Optional[int] = None
@@ -75,7 +76,7 @@ class VcmController:
         return ((buf[0] << 4) | (buf[1] >> 4)) & 0x3FF
 
     def open(self) -> bool:
-        """打开 I2C。失败只记一次，不抛到 exchange。"""
+        """Open I2C. On failure record once; do not raise into exchange."""
         if self._opened and self._fd >= 0:
             return True
         if self._open_failed:
@@ -104,7 +105,7 @@ class VcmController:
         self._opened = False
 
     def set_focus(self, dac: int) -> bool:
-        """直接写目标 DAC。成功返回 True。"""
+        """Write target DAC directly. Returns True on success."""
         if not self.open():
             return False
         payload = self._encode(dac)
@@ -120,7 +121,7 @@ class VcmController:
         return True
 
     def get_focus(self) -> Optional[int]:
-        """回读当前 DAC。失败返回 None。"""
+        """Read back current DAC. Returns None on failure."""
         if not self.open():
             return None
         try:
@@ -139,7 +140,7 @@ class VcmController:
         step: int = 16,
         delay_s: float = 0.008,
     ) -> bool:
-        """大跨度按步进逼近，减轻振铃。init / 手动跳变时用。"""
+        """Step toward a large jump to reduce ringing. Used for init / manual jumps."""
         target = self._clamp(dac)
         current = self._last_dac
         if current is None:
@@ -166,7 +167,7 @@ class VcmController:
         duration_s: float,
         step: int = DEFAULT_BOOT_SCAN_STEP,
     ) -> bool:
-        """在约 duration_s 内平滑走到目标 DAC（按路程均分 sleep）。"""
+        """Smooth to target DAC over about duration_s (sleep split by travel)."""
         target = self._clamp(dac)
         current = self._last_dac
         if current is None:
@@ -180,17 +181,17 @@ class VcmController:
         return self.set_focus_smooth(target, step=step, delay_s=delay_s)
 
     def apply_cruise(self, smooth: bool = True) -> bool:
-        """保持无限远偏置电流，加力锁住镜头。"""
+        """Hold infinity bias current and force-lock the lens."""
         if smooth:
             return self.set_focus_smooth(self.cruise_dac)
         return self.set_focus(self.cruise_dac)
 
     def apply_infinity_lock(self, smooth: bool = True) -> bool:
-        """同 apply_cruise：无限远 + 电磁锁定。"""
+        """Same as apply_cruise: infinity + electromagnetic clamp."""
         return self.apply_cruise(smooth=smooth)
 
     def release_power(self, smooth: bool = True) -> bool:
-        """线圈断电到 DAC 0。会失去电磁刚度，user_app 默认不走这里。"""
+        """Power the coil down to DAC 0. Loses electromagnetic stiffness; user_app avoids this by default."""
         if smooth:
             return self.set_focus_smooth(DAC_MIN)
         return self.set_focus(DAC_MIN)
@@ -200,5 +201,5 @@ class VcmController:
         return self._last_dac
 
 
-# 机端单例。user_app 在 init / 解锁上沿写入巡航 DAC。
+# Airborne singleton. user_app writes cruise DAC on init / arm edge.
 g_vcm_controller = VcmController()

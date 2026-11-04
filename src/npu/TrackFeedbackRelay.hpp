@@ -5,12 +5,14 @@
 #include <mutex>
 #include <vector>
 
-// 人物跟踪回传固定 11 字节：0xFD 0x01。
-// UserAppExChange 先跑 Python，YOLO 回调之后才 push 0xFE。
-// 若宿主 pushBroadcastData 只保留最后一包，Python 里先推的 FD 会被后面的 FE 盖掉，
-// 地面站就会一直停在「等待回传」。
-// 跟踪开关和速度仍在 user_app.py。这里只把 Python 刚推过的那一包记下来，
-// 等 ProtocolSerializer::broadcast 把本帧所有 0xFE 推完后再补推一次。
+// Person-track feedback is a fixed 11-byte packet: 0xFD 0x01.
+// UserAppExChange runs Python first; YOLO callbacks push 0xFE later.
+// If the host pushBroadcastData keeps only the last packet, the FD pushed
+// from Python is overwritten by a later FE and the ground station stays
+// stuck waiting for feedback.
+// Track enable/speed stay in user_app.py. Here we only remember the packet
+// Python just pushed, then re-push it after ProtocolSerializer::broadcast
+// has flushed every 0xFE for this frame.
 class TrackFeedbackRelay
 {
 public:
@@ -42,8 +44,9 @@ public:
                 return;
             }
             copy = s.latest;
-            // Byte2 bit0 = 跟踪开。开着时每个 YOLO 回调都在 FE 后面再补一包，
-            // 这样下一拍的 FE 盖不住最新的 FD。停止帧 bit0 为 0，只补推一次。
+            // Byte2 bit0 = tracking on. While on, every YOLO callback re-pushes
+            // after FE so the next FE cannot bury the latest FD. Stop frames
+            // have bit0 clear and are re-pushed only once.
             const bool trackingOn = (copy[2] & 0x01) != 0;
             if (!trackingOn)
             {

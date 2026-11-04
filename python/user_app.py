@@ -4,7 +4,7 @@ import sys
 
 
 def _ensure_utf8_stdio() -> None:
-    """机端 locale 经常是 C/POSIX，stdout 编码就是 ascii。中文 write 会抛 UnicodeEncodeError。"""
+    """Aircraft locale is often C/POSIX, so stdout encoding is ascii. Non-ascii writes raise UnicodeEncodeError."""
     for stream in (sys.stdout, sys.stderr):
         if stream is None or getattr(stream, "encoding", None) == "utf-8":
             continue
@@ -12,13 +12,13 @@ def _ensure_utf8_stdio() -> None:
         if reconfigure is None:
             continue
         try:
-            # backslashreplace：个别字节写不出去时打成转义，不再把飞控循环打崩。
+            # backslashreplace: escape bytes that cannot be written so the FC loop does not crash.
             reconfigure(encoding="utf-8", errors="backslashreplace")
         except (AttributeError, OSError, ValueError):
             continue
 
 
-# 宿主可能在 import 之后才接上 stdout，exchange / init 里还会再调一次。
+# Host may attach stdout after import; exchange / init call this again.
 _ensure_utf8_stdio()
 
 import math
@@ -72,57 +72,57 @@ TARGET_VERT_X: int = 0
 TARGET_VERT_Y: int = 0
 
 # ------------------------------------------------------------------------------
-# 人物跟踪只让机头转。x/y/z 固定 0，偏航速率单位 deg/s。
-# 框坐标和 exchange(width, height) 是同一套旋转后的画面，不要按地面站视频 180° 再翻。
-# 增益和限幅是台架初值，飞测再改。
-# PLGUserDefine.hpp 的 APMControllerSpeed 没写正偏航是左转还是右转，不要用 apm.pyi 改符号。
+# Person track yaws the nose only. x/y/z stay 0; yaw rate is deg/s.
+# Box coords match the rotated frame passed to exchange(width, height); do not flip another 180 for GCS video.
+# Gain/limits are bench defaults; retune after flight test.
+# PLGUserDefine.hpp APMControllerSpeed does not say which way positive yaw turns; do not flip sign from apm.pyi.
 # ------------------------------------------------------------------------------
 TRACK_DEADZONE_PX = 24
-# 固定台架上原先 0.05 °/s 每像素、限幅 10，人稍偏一点几乎看不出在转。
+# Bench used to be 0.05 deg/s per px, limit 10; small offsets barely yawed.
 TRACK_YAW_GAIN_DEG_S_PER_PX = 0.6
 TRACK_YAW_LIMIT_DEG_S = 60
-TRACK_YAW_SIGN = 1                   # 只能是 1 或 -1。画面右侧的 error_px 乘这个符号得到偏航速率
+TRACK_YAW_SIGN = 1                   # Must be 1 or -1. Right-of-frame error_px * this sign -> yaw rate
 
-# 飞行平移跟踪：不转头，用机体系速度把人拉回画面正中。偏航保持 0。
-# 前后不在这里写，由共用的后退模式决定。
-# 死区沿用 TRACK_DEADZONE_PX。增益是 0.5 cm/s 每像素，限幅仍是 25 cm/s。
-# Y 正方向头文件没写。地面站现有按钮约定 +Y 左、−Y 右。人在画面右侧时给负 Y。
-# 飞测若左右反了，只把 TRACK_PAN_Y_SIGN 改成 +1，不要改误差的正负。
-# Z 与本文件降落一致：set_speed 的第三个参数正值是下降。人在画面下方时给正 Z。
-# 飞测若上下反了，只把 TRACK_PAN_Z_SIGN 改成 -1。
+# Flight pan follow: no yaw; body-frame speed centers the person. Yaw stays 0.
+# Fore/aft is not set here; shared range-hold mode owns X.
+# Deadzone reuses TRACK_DEADZONE_PX. Gain 0.5 cm/s per px, limit 25 cm/s.
+# Header does not define +Y. GCS buttons treat +Y as left, -Y as right; person on the right gets -Y.
+# If left/right is inverted in flight, only flip TRACK_PAN_Y_SIGN to +1; do not flip error polarity.
+# Z matches landing in this file: positive set_speed Z is descent. Person below center gets +Z.
+# If up/down is inverted in flight, only flip TRACK_PAN_Z_SIGN to -1.
 TRACK_PAN_GAIN_CM_S_PER_PX = 0.5
 TRACK_PAN_LIMIT_CM_S = 25
 TRACK_PAN_Y_SIGN = -1
 TRACK_PAN_Z_SIGN = 1
-FLIGHT_FEEDBACK_FMT = "<BBBbbhhhhHH"  # 17 字节，小端。0xFD 0x02
+FLIGHT_FEEDBACK_FMT = "<BBBbbhhhhHH"  # 17 bytes, little-endian. 0xFD 0x02
 
-# 后退模式，偏航跟踪和平移跟踪共用。按下时记住行人框等效边长 sqrt(宽*高)。
-# 框比记住的更大就后退，更小就前进。头文件没写 X 谁是机头。
-# 地面站按钮约定 +X 前进、−X 后退。框变大时 size_err>0，乘 -1 得到负 X。
-# 飞测若前后反了，只改 TRACK_RANGE_X_SIGN。
+# Range-hold / retreat mode, shared by yaw and pan track. On press, lock person-box equiv side sqrt(w*h).
+# Larger box than reference -> retreat; smaller -> advance. Header does not say which X is nose.
+# GCS buttons treat +X as forward, -X as back. Bigger box => size_err>0, times -1 => negative X.
+# If fore/aft is inverted in flight, only change TRACK_RANGE_X_SIGN.
 TRACK_RANGE_GAIN_CM_S_PER_PX = 0.5
 TRACK_RANGE_LIMIT_CM_S = 25
 TRACK_RANGE_DEADZONE_PX = 16
 TRACK_RANGE_X_SIGN = -1
-RANGE_FEEDBACK_FMT = "<BBBhhHH"  # 11 字节，小端。0xFD 0x03
+RANGE_FEEDBACK_FMT = "<BBBhhHH"  # 11 bytes, little-endian. 0xFD 0x03
 
 # ------------------------------------------------------------------------------
-# OV5695 + DW9714 VCM。I2C /dev/i2c-4 @ 0x0C。DAC 0~1023。
-# 开机扫描：图传起来后约 3s 一次——拉远(0)→拉近(1023)→锁无限远(280)。
-# 扫描在 exchange 里跑（不堵 init）；飞巡航锁 280。上锁/解锁不泄力。
-# 地面站 D5 + int16 可临时改；负数回到无限远锁点。
+# OV5695 + DW9714 VCM. I2C /dev/i2c-4 @ 0x0C. DAC 0~1023.
+# Boot scan: once video runs, ~3s far(0) -> near(1023) -> infinity lock(280).
+# Scan runs in exchange (does not block init); cruise locks 280. Arm/disarm does not release force.
+# GCS D5 + int16 can retune temporarily; negative returns to infinity lock.
 # ------------------------------------------------------------------------------
 VCM_ENABLED = True
 VCM_INFINITY_DAC = vcm_controller.DEFAULT_INFINITY_DAC
-VCM_CRUISE_DAC = VCM_INFINITY_DAC  # 兼容旧名
-VCM_BOOT_FAR_DAC = vcm_controller.DEFAULT_BOOT_FAR_DAC      # 拉远
-VCM_BOOT_NEAR_DAC = vcm_controller.DEFAULT_BOOT_NEAR_DAC    # 拉近
+VCM_CRUISE_DAC = VCM_INFINITY_DAC  # legacy alias
+VCM_BOOT_FAR_DAC = vcm_controller.DEFAULT_BOOT_FAR_DAC      # far
+VCM_BOOT_NEAR_DAC = vcm_controller.DEFAULT_BOOT_NEAR_DAC    # near
 VCM_BOOT_STEP = vcm_controller.DEFAULT_BOOT_SCAN_STEP
 VCM_BOOT_STEP_INTERVAL_S = vcm_controller.DEFAULT_BOOT_STEP_INTERVAL_S
 VCM_BOOT_HOLD_S = vcm_controller.DEFAULT_BOOT_HOLD_S
 VCM_BOOT_START_DELAY_S = vcm_controller.DEFAULT_BOOT_START_DELAY_S
-VCM_BOOT_SCAN_LOOP = False  # 开机只扫一轮
-# 开机扫描状态机：None 未开始；字符串为阶段；"done" 结束
+VCM_BOOT_SCAN_LOOP = False  # one boot scan only
+# Boot-scan state machine: None not started; str = phase; "done" finished
 _VCM_BOOT_PHASE = None
 _VCM_BOOT_PHASE_T0 = 0.0
 _VCM_BOOT_NEXT_STEP_T = 0.0
@@ -130,27 +130,27 @@ _VCM_BOOT_CUR = None
 _VCM_BOOT_LOOP_N = 0
 _VCM_BOOT_SCAN_T0 = 0.0
 
-# 固定自动化：万向节实验箱。位移/高度/降落/云台在这个模式下丢掉。
-# 油门是 PWM μs。头文件只提供 APMControllerServo(pin, PWM)，没有写电机在哪些 pin。
-# 云台占用 pin 4。FIXED_MOTOR_PINS 为空时只记状态，不调用 set_servo。
+# Fixed automation: gimbal test box. Horiz/vert/land/gimbal are ignored in this mode.
+# Throttle is PWM us. Header only exposes APMControllerServo(pin, PWM); motor pins are not documented.
+# Gimbal uses pin 4. Empty FIXED_MOTOR_PINS only tracks state; set_servo is not called.
 FIXED_THROTTLE_FROM = 1000
 FIXED_THROTTLE_INIT = 1200
 FIXED_THROTTLE_CAP = 1250
 FIXED_THROTTLE_RAMP_S = 3.0
-FIXED_YAW_TRAVEL_DEG = 178.0         # 中心两侧合计 356°
-FIXED_MOTOR_PINS = ()                # 例如 (0, 1, 2, 3)。不要填 4。
+FIXED_YAW_TRAVEL_DEG = 178.0         # +/-178 from center = 356 total
+FIXED_MOTOR_PINS = ()                # e.g. (0, 1, 2, 3). Do not include 4.
 
 PERSON_LABELS_PATH = "/etc/rknn/coco_80_labels_list.txt"
-TRACK_FEEDBACK_FMT = "<BBBbhbhH"  # 11 字节，小端，前面不加长度
+TRACK_FEEDBACK_FMT = "<BBBbhbhH"  # 11 bytes, little-endian, no length prefix
 
 PERSON_TRACK_ENABLED = False
-FLIGHT_FOLLOW_ENABLED = False        # D3 01。左右 + 上下平移，和偏航跟踪互斥
-RANGE_HOLD_ENABLED = False           # D4 01。前后距离，偏航和平移都能带着走
-RANGE_HOLD_REF_PX = None             # 按下后退模式时锁定的等效边长，像素
-PERSON_TRACK_LOCK_ID = None          # 上一帧跟上的 track_id；消失后再改选
+FLIGHT_FOLLOW_ENABLED = False        # D3 01. Left/right + up/down pan; exclusive with yaw track
+RANGE_HOLD_ENABLED = False           # D4 01. Fore/aft range; can ride with yaw or pan
+RANGE_HOLD_REF_PX = None             # equiv side locked when range-hold pressed, pixels
+PERSON_TRACK_LOCK_ID = None          # track_id from last frame; reselect when it disappears
 LAST_FRAME_WIDTH = 0
 LAST_FRAME_HEIGHT = 0
-LAST_DISARM_FLAG = None              # None：还没见过上锁标志，不能当成“刚上锁”
+LAST_DISARM_FLAG = None              # None: never seen disarm flag; not treated as "just locked"
 _PERSON_CLASS_ID = None
 _PERSON_CLASS_RESOLVED = False
 _TRACK_LOG_DIVIDER = 0
@@ -178,7 +178,7 @@ def init(width: int, height: int, pixfmt: int) -> int:
     _ensure_utf8_stdio()
     print(f"[Python] init() called: width={width}, height={height}, pixfmt={pixfmt}")
     if VCM_ENABLED:
-        # init 只挂起扫描：等 exchange/图传起来再扫，观感才和对控制台一样。
+        # init only arms the scan: run after exchange/video starts so it matches console behavior.
         vcm_controller.g_vcm_controller.cruise_dac = int(VCM_INFINITY_DAC)
         _VCM_BOOT_PHASE = "pending"
         print(
@@ -305,7 +305,7 @@ def _try_apply_gimbal_control(packet: bytes) -> bool:
 
 
 def _yaw_sign_ready() -> Tuple[bool, int]:
-    """TRACK_YAW_SIGN 必须是整数 1 或 -1。bool 不算。不是这个值就只回传、不调用 set_speed。"""
+    """TRACK_YAW_SIGN must be int 1 or -1 (bool does not count). Otherwise feedback only; no set_speed."""
     sign = TRACK_YAW_SIGN
     if type(sign) is not int or sign not in (1, -1):
         return False, 0
@@ -314,8 +314,8 @@ def _yaw_sign_ready() -> Tuple[bool, int]:
 
 def _resolve_person_class_id() -> Optional[int]:
     """
-    按标签文件找人。第一行是 person 时 class_id 为 0；
-    第一行不是 person 就按名字找，不把 0 写死。
+    Resolve person from the labels file. If the first line is person, class_id is 0;
+    otherwise look up by name and do not hard-code 0.
     """
     global _PERSON_CLASS_ID, _PERSON_CLASS_RESOLVED
     if _PERSON_CLASS_RESOLVED:
@@ -358,7 +358,7 @@ def _resolve_person_class_id() -> Optional[int]:
 
 
 def _push_track_feedback(flags: int, turn: int, speed: int, axis: int, error_px: int, width: int) -> None:
-    """固定 11 字节，小端，前面不加长度。地面站靠 0xFD 0x01 刷新跟踪框。"""
+    """Fixed 11-byte little-endian packet, no length prefix. GCS refreshes the track box from 0xFD 0x01."""
     error_px = int(error_px)
     if error_px > 32767:
         error_px = 32767
@@ -384,7 +384,7 @@ def _push_track_feedback(flags: int, turn: int, speed: int, axis: int, error_px:
 
 
 def _set_fixed_mode(enabled: bool) -> None:
-    """E0 01 / E0 00。打开时清掉位置环和降落，偏航行程从 0 重新计。"""
+    """E0 01 / E0 00. When enabled, clear position loops and landing; yaw travel restarts at 0."""
     global FIXED_MODE, FIXED_YAW_ACCUM_DEG, FIXED_YAW_LAST_T
     global FIXED_RAMP_START, FIXED_THROTTLE_PWM, _FIXED_RAMP_DONE
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE, PYTHON_LANDING
@@ -398,7 +398,7 @@ def _set_fixed_mode(enabled: bool) -> None:
         HORIZ_TARGET_ACTIVE = False
         VERT_TARGET_ACTIVE = False
         PYTHON_LANDING = False
-        # 实验箱只留偏航跟踪。平移速度环在这里关掉，避免和油门斜坡抢飞控。
+        # Test box keeps yaw track only. Stop pan speed loop so it does not fight the throttle ramp.
         _stop_flight_follow("fixed box", always_zero_speed=False)
         _stop_range_hold("fixed box", always_zero_speed=False)
         sys.stdout.write(
@@ -412,7 +412,7 @@ def _set_fixed_mode(enabled: bool) -> None:
 
 
 def _release_fixed_throttle() -> None:
-    """上锁时停掉斜坡。已经写过电机的话把 PWM 收回 1000。"""
+    """On disarm, stop the ramp. If motors were written, pull PWM back to 1000."""
     global FIXED_RAMP_START, FIXED_THROTTLE_PWM, _FIXED_RAMP_DONE
     FIXED_RAMP_START = None
     FIXED_THROTTLE_PWM = FIXED_THROTTLE_FROM
@@ -421,7 +421,7 @@ def _release_fixed_throttle() -> None:
 
 
 def _begin_fixed_throttle_ramp() -> None:
-    """解锁后开始 3 秒油门斜坡。模式没开时不动。实机平移跟踪不走这里。"""
+    """After arm, start the 3s throttle ramp. No-op if mode is off. Real flight pan follow does not use this."""
     global FIXED_RAMP_START, FIXED_THROTTLE_PWM, _FIXED_RAMP_DONE
     if not FIXED_MODE:
         return
@@ -436,7 +436,7 @@ def _begin_fixed_throttle_ramp() -> None:
 
 
 def _write_fixed_throttle(pwm: int) -> None:
-    """把油门 PWM 写到已填写的电机 pin。没填 pin 就只打印一次。"""
+    """Write throttle PWM to configured motor pins. If pins are empty, print once."""
     global _FIXED_PIN_WARNED
     pwm = int(max(FIXED_THROTTLE_FROM, min(FIXED_THROTTLE_CAP, pwm)))
     pins = tuple(int(pin) for pin in FIXED_MOTOR_PINS)
@@ -456,7 +456,7 @@ def _write_fixed_throttle(pwm: int) -> None:
 
 
 def process_fixed_throttle(now: float) -> None:
-    """只在固定自动化且斜坡已开始时跑。平移跟踪不开这个模式，不会进这里。"""
+    """Runs only in fixed automation after the ramp has started. Pan follow does not enter this path."""
     global FIXED_THROTTLE_PWM, _FIXED_RAMP_DONE
     if not FIXED_MODE or FIXED_RAMP_START is None:
         return
@@ -480,8 +480,8 @@ def process_fixed_throttle(now: float) -> None:
 
 def _limit_fixed_yaw(yaw_rate: int, now: float) -> int:
     """
-    按已经发出去的偏航速率积分，离开进入模式时的方向累计超过 ±178° 就停。
-    不靠偏航角的正负方向，头文件没写正转速对应左转还是右转。
+    Integrate commanded yaw rate; stop once travel from mode entry exceeds +/-178 deg.
+    Do not use attitude yaw polarity; the header does not say which way positive rate turns.
     """
     global FIXED_YAW_ACCUM_DEG, FIXED_YAW_LAST_T
     if not FIXED_MODE:
@@ -501,15 +501,15 @@ def _limit_fixed_yaw(yaw_rate: int, now: float) -> int:
 
 
 def _apply_track_yaw(yaw_rate_deg_s: int, x_cm_s: int = 0) -> None:
-    """写偏航速率。后退模式开着时 x 用框大小算出来的前后速度，否则 x 为 0。"""
+    """Write yaw rate. With range-hold on, x is fore/aft from box size; otherwise x is 0."""
     apm.set_speed(int(x_cm_s), 0, 0, int(yaw_rate_deg_s))
 
 
 def _start_person_track() -> None:
-    """D1 01。清掉位置环锁存，避免和偏航速度环一起写。"""
+    """D1 01. Clear position-loop latches so they do not fight the yaw speed loop."""
     global PERSON_TRACK_ENABLED, PERSON_TRACK_LOCK_ID
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
-    # 偏航和平移不能同时写速度。先把平移停掉。
+    # Yaw and pan must not write speed together. Stop pan first.
     _stop_flight_follow("yaw track", always_zero_speed=False)
     PERSON_TRACK_ENABLED = True
     PERSON_TRACK_LOCK_ID = None
@@ -526,28 +526,28 @@ def _start_person_track() -> None:
 
 def _stop_person_track(reason: str, always_zero_speed: bool) -> None:
     """
-    关掉跟踪。
-    always_zero_speed：D1 00 / 降落 / 上锁即使本来没在跟踪也要把速度清零。
-    跟踪原本开着时，无论哪种原因都清零，并立刻再推一帧停止回传（bit2=1）。
+    Stop person track.
+    always_zero_speed: D1 00 / land / disarm zero speed even if track was already off.
+    If track was on, always zero and immediately push a stop feedback frame (bit2=1).
     """
     global PERSON_TRACK_ENABLED, PERSON_TRACK_LOCK_ID
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
     was_on = PERSON_TRACK_ENABLED
     PERSON_TRACK_ENABLED = False
     PERSON_TRACK_LOCK_ID = None
-    # 水平位移包会在本函数返回后自己重新打开 HORIZ，那种情况不要在这里清目标。
+    # A horiz packet may re-enable HORIZ after this returns; do not clear targets in that case.
     if always_zero_speed:
         HORIZ_TARGET_ACTIVE = False
         VERT_TARGET_ACTIVE = False
 
     did_speed = False
-    # 平移跟踪还占着速度环，或后退模式还要写 x 时，不要把速度清成全 0。
+    # If pan follow still owns the speed loop, or range-hold still writes x, do not zero all axes.
     if (was_on or always_zero_speed) and not FLIGHT_FOLLOW_ENABLED and not RANGE_HOLD_ENABLED:
         apm.set_speed(0, 0, 0, 0)
         did_speed = True
 
     if was_on:
-        # bit0=0 跟踪关，bit2=1 因为上面已经 set_speed(0,0,0,0)。axis=2 表示 speed 是偏航速率。
+        # bit0=0 track off; bit2=1 because set_speed(0,0,0,0) already ran. axis=2 => speed is yaw rate.
         flags = 0x04 if did_speed else 0x00
         _push_track_feedback(flags, 0, 0, 2, 0, LAST_FRAME_WIDTH)
         sys.stdout.write(f"\n[Python] Person track OFF ({reason}), speed zeroed\n")
@@ -555,7 +555,7 @@ def _stop_person_track(reason: str, always_zero_speed: bool) -> None:
 
 
 def _vcm_log(msg: str) -> None:
-    """VCM 日志：init / exchange 都能写。"""
+    """VCM log helper: safe from both init and exchange."""
     try:
         sys.stdout.write("\n" + msg + "\n")
         sys.stdout.flush()
@@ -565,7 +565,7 @@ def _vcm_log(msg: str) -> None:
 
 def _vcm_boot_scan_tick() -> None:
     """
-    图传帧回调里推进开机扫描：约 3s 拉远→拉近→锁无限远（只一轮）。
+    Advance boot scan from the video frame callback: ~3s far -> near -> infinity lock (once).
     """
     global _VCM_BOOT_PHASE, _VCM_BOOT_PHASE_T0, _VCM_BOOT_NEXT_STEP_T
     global _VCM_BOOT_CUR, _VCM_BOOT_LOOP_N, _VCM_BOOT_SCAN_T0
@@ -587,7 +587,7 @@ def _vcm_boot_scan_tick() -> None:
         return ok
 
     def _step_toward(target: int) -> bool:
-        """True 表示已到达 target。"""
+        """True when target has been reached."""
         global _VCM_BOOT_NEXT_STEP_T, _VCM_BOOT_CUR
         if _VCM_BOOT_CUR is None:
             rb = vcm.get_focus()
@@ -668,7 +668,7 @@ def _vcm_boot_scan_tick() -> None:
 
 
 def _vcm_hold_infinity(reason: str) -> None:
-    """无限远 + 偏置电流加力锁镜。失败只打日志，不抛回 exchange。"""
+    """Infinity + bias-current force-lock. On failure log only; do not raise into exchange."""
     if not VCM_ENABLED:
         return
     vcm_controller.g_vcm_controller.cruise_dac = int(VCM_INFINITY_DAC)
@@ -683,12 +683,12 @@ def _vcm_hold_infinity(reason: str) -> None:
 
 
 def _vcm_hold_cruise(reason: str) -> None:
-    """兼容旧调用名，等同无限远加力锁。"""
+    """Legacy alias for infinity force-lock."""
     _vcm_hold_infinity(reason)
 
 
 def _try_apply_vcm_focus(packet: bytes) -> bool:
-    """D5 + int16。dac>=0 写绝对位置；负数回到无限远锁点。"""
+    """D5 + int16. dac>=0 writes absolute position; negative returns to infinity lock."""
     size = struct.calcsize(FMT_VCM_FOCUS)
     if len(packet) < size:
         return False
@@ -714,7 +714,7 @@ def _try_apply_vcm_focus(packet: bytes) -> bool:
 
 
 def _stop_track_if_just_locked(telemetry: Optional['TelemetryData']) -> None:
-    """RC 上锁不一定有 CB/CC 包。只在解锁变成上锁的这一拍停跟踪。"""
+    """RC disarm may arrive without CB/CC. Stop track only on the unlock->lock edge."""
     global LAST_DISARM_FLAG
     if not telemetry:
         return
@@ -728,7 +728,7 @@ def _stop_track_if_just_locked(telemetry: Optional['TelemetryData']) -> None:
         _stop_range_hold("disarm flag", always_zero_speed=True)
         if FIXED_MODE:
             _release_fixed_throttle()
-        # 上锁仍保持无限远加力锁，不写 DAC 0。
+        # Stay at infinity force-lock while disarmed; do not write DAC 0.
         _vcm_hold_infinity("disarm flag")
     elif LAST_DISARM_FLAG is True and not locked:
         _vcm_hold_infinity("arm flag")
@@ -736,7 +736,7 @@ def _stop_track_if_just_locked(telemetry: Optional['TelemetryData']) -> None:
 
 
 def _select_person(detections, person_class_id: int):
-    """多人时沿用上一帧的 track_id；这个 id 消失后再选 confidence 最高的人。"""
+    """With multiple people, keep the previous track_id; when it disappears pick highest confidence."""
     global PERSON_TRACK_LOCK_ID
     people = []
     for det in detections or []:
@@ -763,8 +763,8 @@ def _select_person(detections, person_class_id: int):
 
 def process_person_track(width: int, telemetry: Optional['TelemetryData']) -> None:
     """
-    跟踪开着时每帧都跑，有没有人都回传。
-    符号是 1 或 -1 时每帧都 set_speed(0, 0, 0, yaw)。不是这个值时只回传。
+    Runs every frame while track is on; always pushes feedback even with no person.
+    When sign is 1 or -1, every frame calls set_speed(0, 0, 0, yaw). Otherwise feedback only.
     """
     global _TRACK_LOG_DIVIDER
     if not PERSON_TRACK_ENABLED or PYTHON_LANDING:
@@ -783,7 +783,7 @@ def process_person_track(width: int, telemetry: Optional['TelemetryData']) -> No
     if used_box:
         box = person["box"]
         center_x = (float(box[0]) + float(box[2])) / 2.0
-        # 人在画面右侧为正，不按地面站视频的 180° 再翻
+        # Positive when person is right of center; do not flip another 180 for GCS video
         error_px = int(round(center_x - (frame_w / 2.0)))
         if error_px > TRACK_DEADZONE_PX:
             turn = 1
@@ -801,7 +801,7 @@ def process_person_track(width: int, telemetry: Optional['TelemetryData']) -> No
         x_cm_s, size_err, side_px, has_ref, range_ready = _range_command(box, used_box)
         if not range_ready:
             x_cm_s = 0
-    # axis=2：这一拍的 speed 是偏航速率 deg/s，地面站据此显示「偏航 ±N °/s」
+    # axis=2: this frame speed is yaw rate deg/s; GCS shows "yaw +/-N deg/s"
     axis_code = 2
     if ready:
         if used_box and turn != 0:
@@ -812,20 +812,20 @@ def process_person_track(width: int, telemetry: Optional['TelemetryData']) -> No
             elif raw < -limit:
                 raw = -limit
             yaw_rate = int(round(raw))
-        # 固定模式累计转过 ±178° 后，继续往外的转速写成 0。
+        # In fixed mode, after +/-178 deg travel, outward rates are forced to 0.
         yaw_rate = _limit_fixed_yaw(yaw_rate, time.perf_counter())
-        # 死区内或这一帧没有人：上一拍的转速会留着，必须写成 0。x 是共用的后退模式。
+        # In deadzone or no person this frame: previous rate would stick, so write 0. x is shared range-hold.
         _apply_track_yaw(yaw_rate, x_cm_s)
         commanded = True
     elif RANGE_HOLD_ENABLED and range_ready:
         apm.set_speed(int(x_cm_s), 0, 0, 0)
         commanded = True
 
-    flags = 0x01  # bit0 跟踪开
+    flags = 0x01  # bit0 tracking on
     if used_box:
         flags |= 0x02
     if commanded:
-        flags |= 0x04  # bit2：本帧确实调用了 set_speed
+        flags |= 0x04  # bit2: set_speed was called this frame
     _push_track_feedback(flags, turn, yaw_rate if commanded else 0, axis_code, error_px if used_box else 0, frame_w)
     if RANGE_HOLD_ENABLED:
         range_flags = 0x01
@@ -850,7 +850,7 @@ def process_person_track(width: int, telemetry: Optional['TelemetryData']) -> No
 
 
 def _pan_signs_ready() -> Tuple[bool, int, int]:
-    """两个平移符号都必须是整数 1 或 -1。bool 不算。否则只回传、不调用 set_speed。"""
+    """Both pan signs must be int 1 or -1 (bool does not count). Otherwise feedback only; no set_speed."""
     y_sign = TRACK_PAN_Y_SIGN
     z_sign = TRACK_PAN_Z_SIGN
     if type(y_sign) is not int or y_sign not in (1, -1):
@@ -861,7 +861,7 @@ def _pan_signs_ready() -> Tuple[bool, int, int]:
 
 
 def _clamp_pan_cm_s(raw: float, limit: float = None) -> int:
-    """速度限幅。不传 limit 时用平移上限。"""
+    """Clamp speed. Without limit, use the pan cap."""
     cap = float(TRACK_PAN_LIMIT_CM_S if limit is None else limit)
     if raw > cap:
         raw = cap
@@ -871,7 +871,7 @@ def _clamp_pan_cm_s(raw: float, limit: float = None) -> int:
 
 
 def _box_side_px(box) -> float:
-    """行人框的等效边长，像素。宽或高为 0 时返回 0。"""
+    """Person-box equivalent side length in pixels. Returns 0 if width or height is 0."""
     width = abs(float(box[2]) - float(box[0]))
     height = abs(float(box[3]) - float(box[1]))
     if width <= 0.0 or height <= 0.0:
@@ -880,7 +880,7 @@ def _box_side_px(box) -> float:
 
 
 def _range_sign_ready() -> Tuple[bool, int]:
-    """前后符号必须是整数 1 或 -1。"""
+    """Fore/aft sign must be int 1 or -1."""
     sign = TRACK_RANGE_X_SIGN
     if type(sign) is not int or sign not in (1, -1):
         return False, 0
@@ -889,8 +889,8 @@ def _range_sign_ready() -> Tuple[bool, int]:
 
 def _range_command(box, used_box: bool):
     """
-    后退模式开着时，按当前框相对记住的边长给出 x。
-    返回 x_cm_s、边长差、当前边长、是否已记住、符号是否可下发。
+    While range-hold is on, compute x from current box vs locked side length.
+    Returns x_cm_s, size_err, current side, has_ref, and whether the sign may be commanded.
     """
     global RANGE_HOLD_REF_PX
     ready, sign = _range_sign_ready()
@@ -913,7 +913,7 @@ def _range_command(box, used_box: bool):
 
 
 def _push_range_feedback(flags: int, x_cm_s: int, size_err: int, ref_px: int, cur_px: int) -> None:
-    """固定 11 字节。0xFD 0x03。地面站用来显示后退模式。"""
+    """Fixed 11 bytes. 0xFD 0x03. GCS uses this to show range-hold."""
 
     def clamp_i16(value: int) -> int:
         value = int(value)
@@ -945,7 +945,7 @@ def _push_range_feedback(flags: int, x_cm_s: int, size_err: int, ref_px: int, cu
 
 
 def _start_range_hold() -> None:
-    """D4 01。记住的边长等下一帧有人再锁。偏航和平移都不用关。"""
+    """D4 01. Lock reference side on the next frame with a person. Yaw/pan stay on."""
     global RANGE_HOLD_ENABLED, RANGE_HOLD_REF_PX
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
     if FIXED_MODE:
@@ -973,7 +973,7 @@ def _start_range_hold() -> None:
 
 
 def _stop_range_hold(reason: str, always_zero_speed: bool) -> None:
-    """关掉后退模式。偏航或平移还开着时不清速度，下一拍由那一套自己写。"""
+    """Stop range-hold. If yaw or pan is still on, do not zero speed; that path writes next frame."""
     global RANGE_HOLD_ENABLED, RANGE_HOLD_REF_PX
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
     was_on = RANGE_HOLD_ENABLED
@@ -994,7 +994,7 @@ def _stop_range_hold(reason: str, always_zero_speed: bool) -> None:
 
 
 def _apply_flight_speed(x_cm_s: int, y_cm_s: int, z_cm_s: int) -> None:
-    """写前后、左右、上下。偏航保持 0，不调用 set_position。"""
+    """Write fore/aft, left/right, up/down. Yaw stays 0; do not call set_position."""
     apm.set_speed(int(x_cm_s), int(y_cm_s), int(z_cm_s), 0)
 
 
@@ -1009,7 +1009,7 @@ def _push_flight_feedback(
     width: int,
     height: int,
 ) -> None:
-    """固定 17 字节。地面站靠 0xFD 0x02 刷新平移跟踪框。"""
+    """Fixed 17 bytes. GCS refreshes the pan-follow box from 0xFD 0x02."""
 
     def clamp_i16(value: int) -> int:
         value = int(value)
@@ -1045,7 +1045,7 @@ def _push_flight_feedback(
 
 
 def _start_flight_follow() -> None:
-    """D3 01。退出位置环，并停掉偏航跟踪，避免两套速度环一起写。"""
+    """D3 01. Leave position loops and stop yaw track so two speed loops do not fight."""
     global FLIGHT_FOLLOW_ENABLED, PERSON_TRACK_LOCK_ID
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
     if FIXED_MODE:
@@ -1075,9 +1075,9 @@ def _start_flight_follow() -> None:
 
 def _stop_flight_follow(reason: str, always_zero_speed: bool) -> None:
     """
-    关掉平移跟踪。
-    偏航跟踪还开着时不清速度，避免 D3 00 把偏航转速掐掉。
-    原本开着时推一帧 0xFD 0x02，bit0=0。
+    Stop pan follow.
+    If yaw track is still on, do not zero speed so D3 00 does not kill yaw rate.
+    If it was on, push one 0xFD 0x02 with bit0=0.
     """
     global FLIGHT_FOLLOW_ENABLED, PERSON_TRACK_LOCK_ID
     global HORIZ_TARGET_ACTIVE, VERT_TARGET_ACTIVE
@@ -1090,7 +1090,7 @@ def _stop_flight_follow(reason: str, always_zero_speed: bool) -> None:
         VERT_TARGET_ACTIVE = False
 
     did_speed = False
-    # 偏航跟踪或后退模式还占着速度环时，不要在这里清成全 0。
+    # If yaw track or range-hold still owns the speed loop, do not zero all axes here.
     if (was_on or always_zero_speed) and not PERSON_TRACK_ENABLED and not RANGE_HOLD_ENABLED:
         apm.set_speed(0, 0, 0, 0)
         did_speed = True
@@ -1104,8 +1104,8 @@ def _stop_flight_follow(reason: str, always_zero_speed: bool) -> None:
 
 def process_flight_follow(width: int, height: int, telemetry: Optional['TelemetryData']) -> None:
     """
-    平移跟踪或单独的后退模式每帧都跑。
-    平移开着时写 y、z。后退模式开着时再写 x。两套都关着的偏航不走这里。
+    Runs every frame for pan follow and/or standalone range-hold.
+    With pan on, write y/z. With range-hold on, also write x. Yaw-only does not use this path.
     """
     global _TRACK_LOG_DIVIDER
     follow_on = FLIGHT_FOLLOW_ENABLED and not PYTHON_LANDING and not FIXED_MODE
@@ -1130,7 +1130,7 @@ def process_flight_follow(width: int, height: int, telemetry: Optional['Telemetr
     if used_box:
         center_x = (float(box[0]) + float(box[2])) / 2.0
         center_y = (float(box[1]) + float(box[3])) / 2.0
-        # 右为正、下为正。框和 exchange 的宽高是同一套画面，不按地面站 180° 再翻。
+        # Right and down are positive. Box and exchange width/height share one frame; no GCS 180 flip.
         err_x = int(round(center_x - (frame_w / 2.0)))
         err_y = int(round(center_y - (frame_h / 2.0)))
         if err_x > TRACK_DEADZONE_PX:
@@ -1148,10 +1148,10 @@ def process_flight_follow(width: int, height: int, telemetry: Optional['Telemetr
     commanded = False
     if follow_on and ready:
         if used_box and pan != 0:
-            # 人在右侧（err_x>0）乘 Y 符号。默认 -1，对应地面站「−Y = 右移」。
+            # Person on the right (err_x>0) times Y sign. Default -1 matches GCS "-Y = move right".
             y_cm_s = _clamp_pan_cm_s(err_x * y_sign * TRACK_PAN_GAIN_CM_S_PER_PX)
         if used_box and vert != 0:
-            # 人在下方（err_y>0）乘 Z 符号。默认 +1，与降落的正 Z 下降一致。
+            # Person below center (err_y>0) times Z sign. Default +1 matches landing positive-Z descent.
             z_cm_s = _clamp_pan_cm_s(err_y * z_sign * TRACK_PAN_GAIN_CM_S_PER_PX)
         commanded = True
 
@@ -1247,13 +1247,13 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
                     sys.stdout.write(f"\n[Python] Received {cmd_id:02X} 00: Disarming flight controller and setting speed to 0\n")
                     sys.stdout.flush()
                     apm.disarm()
-                    # 上锁：两套跟踪都停，速度清零。停止帧在各自的 stop 里推。
+                    # Disarm: stop both tracks and zero speed. Stop frames are pushed inside each stop helper.
                     _stop_flight_follow("disarm cmd", always_zero_speed=True)
                     _stop_person_track("disarm cmd", always_zero_speed=True)
                     _stop_range_hold("disarm cmd", always_zero_speed=True)
                     if FIXED_MODE:
                         _release_fixed_throttle()
-                    # 上锁仍保持无限远加力锁，不泄到 DAC 0。
+                    # Stay at infinity force-lock while disarmed; do not drop to DAC 0.
                     _vcm_hold_infinity("disarm cmd")
 
         # 2. Standalone Speed Landing (B0 / B1)
@@ -1266,7 +1266,7 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
             if len(p) >= size:
                 _, action = struct.unpack(FMT_LAND, p[:size])
                 if action == 1:
-                    # 降落先停两套跟踪并清速度，后面的 process_landing 再写成下降速度。
+                    # Landing first stops both tracks and zeros speed; process_landing then writes descent.
                     _stop_flight_follow("land", always_zero_speed=True)
                     _stop_person_track("land", always_zero_speed=True)
                     _stop_range_hold("land", always_zero_speed=True)
@@ -1281,7 +1281,7 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
                     sys.stdout.flush()
                     PYTHON_LANDING = False
 
-        # 3. 0xD1 用包长区分：2 字节是跟踪开关，5 字节及以上是水平位移
+        # 3. 0xD1 by packet length: 2 bytes = track switch; 5+ bytes = horiz move
         elif cmd_id == CmdID.POS_REL_HORIZ:
             if len(p) == 2:
                 action = p[1]
@@ -1305,7 +1305,7 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
 
             size = struct.calcsize(FMT_POS_REL_HORIZ)
             if len(p) >= size:
-                # 位置环和速度环不能同时写。先停两套跟踪并清掉上一拍速度，再走原来的水平位移。
+                # Position and speed loops must not write together. Stop both tracks first, then horiz move.
                 _stop_flight_follow("D1 horiz", always_zero_speed=False)
                 _stop_person_track("D1 horiz", always_zero_speed=False)
                 _stop_range_hold("D1 horiz", always_zero_speed=False)
@@ -1401,7 +1401,7 @@ def handle_broadcast_packets(packets: List[bytes], telemetry: Optional['Telemetr
                 sys.stdout.write(f"\n[Python] D5 packet too short: len={len(p)} raw={p.hex()}\n")
                 sys.stdout.flush()
         elif cmd_id == CmdID.FIXED_BOX and len(p) == 2:
-            # 实机飞行跟踪没有固定自动化。E0 不进模式，1000→1200 油门斜坡也不会启动。
+            # Real flight follow does not use fixed automation. E0 stays off; 1000->1200 throttle ramp will not start.
             sys.stdout.write(
                 f"\n[Python] E0 ignored, fixed-box mode is not used raw={p.hex()}\n"
             )
@@ -1418,7 +1418,7 @@ def process_position_control(telemetry: Optional['TelemetryData']) -> None:
     global HORIZ_TARGET_ACTIVE, TARGET_X, TARGET_Y, TARGET_HORIZ_ALT
     global VERT_TARGET_ACTIVE, TARGET_ALT, TARGET_VERT_X, TARGET_VERT_Y
 
-    # 跟踪开着时只允许速度环写飞控，这里不能再 set_position。
+    # While tracking, only the speed loop may write the FC; do not call set_position here.
     if PERSON_TRACK_ENABLED or FLIGHT_FOLLOW_ENABLED or RANGE_HOLD_ENABLED or not telemetry or PYTHON_LANDING:
         return
 
@@ -1489,7 +1489,7 @@ def process_landing(telemetry: Optional['TelemetryData'], current_time: float) -
 def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry: 'TelemetryData') -> int:
     global FRAME_COUNTER, LAST_CALL_TIME, SUM_LATENCY, SUM_INTERVAL, INITIAL_STATUS_CHECKED
     global LAST_FRAME_WIDTH, LAST_FRAME_HEIGHT
-    # 宿主可能在模块导入之后才把 stdout 接成 ascii。编码已经是 utf-8 时这里只看一眼。
+    # Host may attach ascii stdout after import. If encoding is already utf-8 this is a no-op check.
     _ensure_utf8_stdio()
     start_time = time.perf_counter()
     if width and width > 0:
@@ -1497,7 +1497,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     if height and height > 0:
         LAST_FRAME_HEIGHT = int(height)
 
-    # 0. 图传已在跑：按控制台方式推进开机拉远/拉近扫描（不阻塞 init）
+    # 0. Video is running: advance boot far/near scan like the console (does not block init)
     _vcm_boot_scan_tick()
 
     # 1. Calling interval & FPS measurement
@@ -1525,7 +1525,7 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
     if not FIXED_MODE:
         servo_controller.g_servo_controller.update()
 
-    # 5. 上锁沿（没有广播包的 RC 上锁）也要停跟踪
+    # 5. Disarm edge without a broadcast packet (RC) must also stop track
     _stop_track_if_just_locked(telemetry)
 
     if FIXED_MODE:
@@ -1536,8 +1536,8 @@ def exchange(frame_bytes: bytes, width: int, height: int, pixfmt: int, telemetry
         # 7. Landing state machine
         process_landing(telemetry, start_time)
 
-    # 7. 人物跟踪。降落已经在上面把跟踪关掉，避免下降速度被这一拍盖掉。
-    # 框和这里的 width/height 是同一套旋转后的画面。偏航和平移二选一。
+    # 7. Person track. Landing already stopped track above so descent speed is not overwritten this frame.
+    # Box and width/height here share the rotated frame. Yaw and pan are mutually exclusive.
     if PERSON_TRACK_ENABLED:
         process_person_track(width, telemetry)
     elif FLIGHT_FOLLOW_ENABLED or RANGE_HOLD_ENABLED:

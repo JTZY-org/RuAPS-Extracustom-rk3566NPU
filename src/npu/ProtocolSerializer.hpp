@@ -137,7 +137,8 @@ public:
         }
         setLatestDetections(currentTracks);
 
-        // 本回调里的 0xFE 已经全部推完。宿主只留最后一包，跟踪回传再补一次压在最后。
+        // All 0xFE packets for this callback are done. Host keeps only the last
+        // packet, so re-push track feedback once so it lands last.
         TrackFeedbackRelay::replayAfterDetections(pushCallback);
     }
 };

@@ -22,8 +22,8 @@ target_include_directories(UserApp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/librga/include
 )
 
-# 交叉编译用 sysroot 里的 Python，避免链到本机 x86 库。
-# 优先用已 source 的 Poky 环境变量；没有时退回 $HOME/build/pokysdk。
+# Cross-build against sysroot Python so we do not link host x86 libs.
+# Prefer a sourced Poky environment; otherwise fall back to $HOME/build/pokysdk.
 if(DEFINED ENV{OECORE_TARGET_SYSROOT} AND NOT "$ENV{OECORE_TARGET_SYSROOT}" STREQUAL "")
     set(_USERAPP_SYSROOT "$ENV{OECORE_TARGET_SYSROOT}")
 else()
@@ -32,7 +32,7 @@ endif()
 set(Python3_INCLUDE_DIRS "${_USERAPP_SYSROOT}/usr/include/python3.13")
 set(Python3_LIBRARIES "${_USERAPP_SYSROOT}/usr/lib/libpython3.13.so")
 if(NOT EXISTS "${Python3_LIBRARIES}")
-    message(FATAL_ERROR "缺少交叉 Python: ${Python3_LIBRARIES}。先 source Poky environment-setup。")
+    message(FATAL_ERROR "Missing cross Python: ${Python3_LIBRARIES}. Source the Poky environment-setup first.")
 endif()
 target_include_directories(UserApp PRIVATE ${Python3_INCLUDE_DIRS})
 

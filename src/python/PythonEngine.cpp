@@ -163,7 +163,7 @@ PyObject *PythonEngine::apm_PushBroadcast(PyObject *self, PyObject *args)
     {
         std::vector<uint8_t> vec((uint8_t *)view.buf, (uint8_t *)view.buf + view.len);
         g_pushBroadcastData(vec);
-        // 0xFD 0x01 记下来，等本帧 0xFE 推完后再补。其它广播包不进这个缓存。
+        // Remember 0xFD 0x01 and re-push after this frame's 0xFE. Other broadcast packets are not cached.
         TrackFeedbackRelay::noteFromPython(vec);
         PyBuffer_Release(&view);
         Py_RETURN_NONE;
